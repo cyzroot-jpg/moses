@@ -19,6 +19,10 @@ def get_all_metrics(gen, k=None, n_jobs=1,
                     test=None, test_scaffolds=None,
                     ptest=None, ptest_scaffolds=None,
                     train=None):
+
+    print("-----")
+    print(device)
+    print("-----")
     """
     Computes all available metrics between test (scaffold test)
     and generated sets of SMILES.
@@ -305,8 +309,10 @@ def cos_similarity(ref_counts, gen_counts):
     if len(ref_counts) == 0 or len(gen_counts) == 0:
         return np.nan
     keys = np.unique(list(ref_counts.keys()) + list(gen_counts.keys()))
-    ref_vec = np.array([ref_counts.get(k, 0) for k in keys])
-    gen_vec = np.array([gen_counts.get(k, 0) for k in keys])
+    # ref_vec = np.array([ref_counts.get(k, 0) for k in keys])
+    # gen_vec = np.array([gen_counts.get(k, 0) for k in keys])
+    ref_vec = np.array([ref_counts.get(k, 0) for k in keys], dtype=float)
+    gen_vec = np.array([gen_counts.get(k, 0) for k in keys], dtype=float)
     return 1 - cos_distance(ref_vec, gen_vec)
 
 

@@ -3,13 +3,16 @@ import numpy as np
 import rdkit
 
 from moses.metrics.metrics import get_all_metrics
-from moses.script_utils import read_smiles_csv
+from moses.script_utils import read_smiles_csv, record_timing
+from moses.device_utils import resolve_device, warmup_device, DeviceTimer
 
 lg = rdkit.RDLogger.logger()
 lg.setLevel(rdkit.RDLogger.CRITICAL)
 
 
 def main(config, print_metrics=True):
+    # Normalise cpu / cuda:<n> / sdaa:<n> for the metric backend (ChemNet/FCD).
+    config.device = resolve_device(config.device)
     test = None
     test_scaffolds = None
     ptest = None
@@ -30,11 +33,20 @@ def main(config, print_metrics=True):
             config.ptest_scaffolds_path,
             allow_pickle=True)['stats'].item()
     gen = read_smiles_csv(config.gen_path)
-    metrics = get_all_metrics(gen=gen, k=config.ks, n_jobs=config.n_jobs,
-                              device=config.device,
-                              test_scaffolds=test_scaffolds,
-                              ptest=ptest, ptest_scaffolds=ptest_scaffolds,
-                              test=test, train=train)
+
+    # Exclude one-off SDAA/CUDA start-up (context creation, module load) from
+    # the measured evaluation time.
+    warmup_device(config.device)
+
+    with DeviceTimer(config.device, 'eval') as timer:
+        metrics = get_all_metrics(gen=gen, k=config.ks, n_jobs=config.n_jobs,
+                                  device=config.device,
+                                  test_scaffolds=test_scaffolds,
+                                  ptest=ptest, ptest_scaffolds=ptest_scaffolds,
+                                  test=test, train=train)
+
+    record_timing(getattr(config, 'time_path', None), 'eval', timer.elapsed,
+                  n_gen=len(gen), device=config.device)
 
     if print_metrics:
         for name, value in metrics.items():
@@ -73,8 +85,11 @@ def get_parser():
                         type=int, default=1,
                         help='Number of processes to run metrics')
     parser.add_argument('--device',
-                        type=str, default='cpu',
-                        help='GPU device id (`cpu` or `cuda:n`)')
+                        type=str, default='sdaa',
+                        help='Metric device: `cpu`, `cuda:n` or `sdaa:n`')
+    parser.add_argument('--time_path',
+                        type=str, default=None,
+                        help='Optional file to append JSON timing records')
 
     return parser
 

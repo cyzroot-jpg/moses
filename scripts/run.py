@@ -5,6 +5,7 @@ import importlib.util
 import pandas as pd
 
 from moses.models_storage import ModelsStorage
+from moses.device_utils import resolve_device
 
 
 def load_module(name, path):
@@ -82,10 +83,14 @@ def get_parser():
                         help='Number of samples to sample')
     parser.add_argument('--n_jobs', type=int, default=1,
                         help='Number of threads')
-    parser.add_argument('--device', type=str, default='cpu',
-                        help='GPU device index in form `cuda:N` (or `cpu`)')
+    parser.add_argument('--device', type=str, default=None,
+                        help='Device: `cpu`, `cuda:N` or `sdaa:N` '
+                             '(default: auto-detect sdaa > cuda > cpu)')
     parser.add_argument('--metrics', type=str, default='metrics.csv',
                         help='Path to output file with metrics')
+    parser.add_argument('--time_path', type=str, default=None,
+                        help='Optional file to append JSON timing records '
+                             'for both sampling and evaluation')
     parser.add_argument('--train_size', type=int, default=None,
                         help='Size of training dataset')
     parser.add_argument('--test_size', type=int, default=None,
@@ -153,6 +158,7 @@ def sample_from_model(config, model):
          '--gen_save', get_generation_path(config, model),
          '--n_samples', str(config.n_samples)]
     )[0]
+    sampler_config.time_path = config.time_path
     sampler_script.main(model, sampler_config)
 
 
@@ -177,14 +183,18 @@ def eval_metrics(config, model, test_path, test_scaffolds_path,
         args.extend(['--train_path', train_path])
 
     eval_config = eval_parser.parse_args(args)
+    eval_config.time_path = config.time_path
     metrics = eval_script.main(eval_config, print_metrics=False)
 
     return metrics
 
 
 def main(config):
+    # Resolve `auto`/None once so every sub-script receives a concrete device.
+    config.device = resolve_device(config.device)
+
     if not os.path.exists(config.checkpoint_dir):
-        os.mkdir(config.checkpoint_dir)
+        os.makedirs(config.checkpoint_dir)
 
     train_path = config.train_path
     test_path = config.test_path

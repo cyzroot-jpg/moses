@@ -174,7 +174,9 @@ class AAETrainer(MosesTrainer):
                 optimizers['discriminator'].zero_grad()
                 total_loss.backward()
                 for parameter in model.parameters():
-                    parameter.grad.clamp_(-5, 5)
+                    # 修复
+                    if parameter.grad is not None:
+                        parameter.grad.clamp_(-5, 5)
                 if i % (self.config.discriminator_steps + 1) == 0:
                     optimizers['autoencoder'].step()
                 else:

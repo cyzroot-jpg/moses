@@ -147,8 +147,9 @@ class VAE(nn.Module):
 
         z_0 = z.unsqueeze(1).repeat(1, x_emb.size(1), 1)
         x_input = torch.cat([x_emb, z_0], dim=-1)
-        x_input = nn.utils.rnn.pack_padded_sequence(x_input, lengths,
-                                                    batch_first=True)
+        x_input = nn.utils.rnn.pack_padded_sequence(x_input, lengths, batch_first=True)
+
+                                                    
 
         h_0 = self.decoder_lat(z)
         h_0 = h_0.unsqueeze(0).repeat(self.decoder_rnn.num_layers, 1, 1)
@@ -201,7 +202,9 @@ class VAE(nn.Module):
             x[:, 0] = self.bos
             end_pads = torch.tensor([max_len], device=self.device).repeat(
                 n_batch)
-            eos_mask = torch.zeros(n_batch, dtype=torch.uint8,
+            # bool mask: uint8 boolean indexing (masked_fill_) is rejected by
+            # recent PyTorch on every backend, incl. SDAA.
+            eos_mask = torch.zeros(n_batch, dtype=torch.bool,
                                    device=self.device)
 
             # Generating cycle

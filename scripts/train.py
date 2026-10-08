@@ -3,11 +3,10 @@ import os
 import sys
 import torch
 import rdkit
-
 from moses.script_utils import add_train_args, read_smiles_csv, set_seed
 from moses.models_storage import ModelsStorage
 from moses.dataset import get_dataset
-
+from moses.device_utils import build_device
 lg = rdkit.RDLogger.logger()
 lg.setLevel(rdkit.RDLogger.CRITICAL)
 
@@ -30,14 +29,13 @@ def get_parser():
 
 def main(model, config):
     set_seed(config.seed)
-    device = torch.device(config.device)
+    # Builds a torch.device for cpu / cuda:<n> / sdaa:<n> and selects the card.
+    device = build_device(config.device)
+    config.device = str(device)
 
     if config.config_save is not None:
         torch.save(config, config.config_save)
 
-    # For CUDNN to work properly
-    if device.type.startswith('cuda'):
-        torch.cuda.set_device(device.index or 0)
     if config.train_load is None:
         train_data = get_dataset('train')
     else:
@@ -51,7 +49,7 @@ def main(model, config):
     if config.vocab_load is not None:
         assert os.path.exists(config.vocab_load), \
             'vocab_load path does not exist!'
-        vocab = torch.load(config.vocab_load)
+        vocab = torch.load(config.vocab_load, weights_only=False)
     else:
         vocab = trainer.get_vocabulary(train_data)
 

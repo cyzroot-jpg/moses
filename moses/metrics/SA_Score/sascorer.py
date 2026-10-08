@@ -24,7 +24,13 @@ import pickle
 
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
-from rdkit.six import iteritems
+# from rdkit.six import iteritems
+# 本地环境的rdkit版本较新，而改代码需要的rdkit版本是2019年的
+try:
+    from rdkit.six import iteritems
+except ImportError:
+    def iteritems(d):
+        return d.items()
 
 _fscores = None
 

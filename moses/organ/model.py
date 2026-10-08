@@ -20,7 +20,8 @@ class Generator(nn.Module):
 
     def forward(self, x, lengths, states=None):
         x = self.embedding_layer(x)
-        x = pack_padded_sequence(x, lengths, batch_first=True)
+        # x = pack_padded_sequence(x, lengths, batch_first=True)
+        x = pack_padded_sequence(x, lengths.cpu(), batch_first=True)
         x, states = self.lstm_layer(x, states)
         x, _ = pad_packed_sequence(x, batch_first=True)
         x = self.linear_layer(x)
@@ -162,8 +163,12 @@ class ORGAN(nn.Module):
             prevs = torch.empty(n_samples, 1,
                                 dtype=torch.long,
                                 device=self.device).fill_(self.vocabulary.bos)
-            is_end = torch.zeros(n_samples,
-                                 dtype=torch.uint8,
+            # is_end = torch.zeros(n_samples,
+            #                      dtype=torch.uint8,
+            #                      device=self.device)
+
+            s_end = torch.zeros(n_samples,
+                                 dtype=torch.bool,
                                  device=self.device)
             states = None
 
