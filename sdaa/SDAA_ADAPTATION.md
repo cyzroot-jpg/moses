@@ -1,0 +1,251 @@
+# Moses 龙芯 SDAA 适配记录
+
+> 是一个基准测试平台，用于支持机器学习在药物发现中的研究。MOSES实现了多种流行的分子生成模型，并提供了一套衡量生成分子质量和多样性的指标。通过MOSE，我们旨在标准化分子生成研究，促进新模型的共享与比较。
+> 本次结论：**无自定义 CUDA 算子**，端到端在 SDAA 上跑通。
+
+## 一、环境信息
+
+| 项目 | 值 |
+|------|-----|
+| 架构 | loongarch64（Loongnix Server 23.1，32 张 SDAA 卡）|
+| 机器 | `10.71.13.47`，容器 `tuyi_test` |
+| Python | 3.12（venv `/home/py312`）|
+| torch | 2.12.0 + torch_sdaa 3.3.0b0 |
+| 分支 | `adapt/sdaa` |
+
+## 二、分析结论
+
+### 2.1 无自定义 CUDA 算子
+Mosese无 `.cu` 文件、无 triton、无 cpp_extension，全是标准 PyTorch 算子。
+
+### 2.2 依赖链
+
+| 依赖 | 状态 | 处理 |
+|------|------|------|
+| torch | ✅ 已有 2.12 + torch_sdaa | -- |
+| rdkit 2026.9.1 | ✅ 已有 | -- |
+| fcd-torch 1.0.7 | ✅ pip安装 | -- |
+| scipy 1.17.1 | ✅pip安装 | -- |
+| tensorflow-gpu==1.14 | ❌ 环境中无这个包 | -- |
+
+### 2.3 latentgan模型
+这个模型需要安装Tensorflow目前当前环境安装不了
+
+## 三、适配改动
+
+### 3.1 新版本的Rdkit已经删除了rdkit.six
+解决方法：
+```python
+try:
+    from rdkit.six import iteritems
+except ImportError:
+    def iteritems(d):
+        return d.items()
+```
+修改的代码：SA_Score/sascorer.py:29-33
+
+### 3.2 pandas 2.x中移除了DataFrame.append
+解决方法：
+```python
+# 原：
+# _filters = [Chem.MolFromSmarts(x) for x in
+#             _mcf.append(_pains, sort=True)['smarts'].values]
+
+# 修：
+_filters = [Chem.MolFromSmarts(x) for x in
+            pd.concat([_mcf, _pains], sort=True)['smarts'].values]
+```
+使用concat替换append
+
+修改的代码：metrics/utils.py:28
+
+
+
+### 3.3 项目代码中对参数--device的校验严格
+原Moses中device参数匹配中没有SDAA
+
+解决方法：
+```pytho
+# 添加sdaa
+^(cuda(:[0-9]+)?|sdaa(:[0-9]+)?|cpu)$
+```
+修改的代码位置：script_utils.py:11
+
+
+### 3.4 lengths默认放在了sdaa上
+
+问题：RuntimeError: 'lengths' should be a 1D CPU int64 tensor, but got sdaa Long	SDAA 约束：pack_padded_sequence 要求 lengths 在 CPU	调用处改 lengths.cpu()
+
+解决方法：
+```python
+# 在调用处把 lengths 搬到 CPU
+
+# 原：
+# x = pack_padded_sequence(x, lengths, batch_first=True)
+
+# 修改：
+x = pack_padded_sequence(x, lengths.cpu(), batch_first=True)
+
+```
+修改的代码的位置：
+moses/moses/aae/model.py:27 和 :57
+moses/moses/char_rnn/model.py:32
+moses/moses/organ/model.py:24
+
+### 3.5 AAE模型梯度裁剪时出现了梯度为None的情况，导致裁剪崩溃
+
+解决方法：
+```python
+for parameter in model.parameters():
+    if parameter.grad is not None:      # ← 只裁剪有梯度的
+        parameter.grad.clamp_(-5, 5)
+- 有梯度的参数：照常裁剪；
+- 没梯度的参数：跳过（它这一步本来也不会被优化器更新）。
+```
+修改代码的位置：moses/aae/trainer.py:176-177
+
+### 3.6 weights_only 问题
+解决方法：
+```python
+model_config = torch.load(config.config_load)  -->  model_config = torch.load(config.config_load, weights_only=False)
+model_vocab = torch.load(config.vocab_load)  -->  model_vocab = torch.load(config.vocab_load, weights_only=False)
+model_state = torch.load(config.model_load)  -->  model_state = torch.load(config.model_load, weights_only=False)
+```
+修改代码的位置：scripts/sample.py
+
+### 3.7 torch版本中对mask变严格了
+问题：旧代码用 torch.uint8 当布尔掩码，新版 PyTorch 要求 bool。
+
+解决方法：
+```python
+is_end = torch.zeros(n_batch, dtype=torch.uint8,   -->  is_end = torch.zeros(n_batch, dtype=torch.bool,
+                     device=self.device)                        device=self.device)
+```
+代码修改的位置：model.py
+
+### 3.8 pandas 2.x 已移除 squeeze
+解决方法：
+```python
+def read_smiles_csv(path):
+    return pd.read_csv(path,
+                       usecols=['SMILES'], squeeze=True).astype(str).tolist()
+
+# 修改成这样
+def read_smiles_csv(path):
+    return pd.read_csv(path,
+                       usecols=['SMILES'])['SMILES'].astype(str).tolist()
+```
+代码修改的位置：moses/script_utils.py
+
+## 四、权重下载
+
+因为本仓库未提供权重下载路径，因此我找到了一个在其他数据集上训练的权重，下载路径如下：
+https://github.com/ytl0410/Polymer-Generative-Models-Benchmark/tree/main/Well-trained%20models/PubChem
+
+
+## 五、测试结果（端到端通过）
+
+```bash
+# step 1：分子的生成
+python scripts/sample.py aae \
+       --model_load ./moses/checkpoint/aae/model.pt \
+       --vocab_load ./moses/checkpoint/aae/vocab.pt \
+       --config_load ./moses/checkpoint/aae/config.pt \
+       --n_samples 30000 \
+       --gen_save ./moses/aae/aae_gen.csv
+
+```
+```bash
+# step 2：评估
+python scripts/eval.py \
+       --test_path ./moses/moses/dataset/data/test.csv.gz \
+       --test_scaffolds_path ./moses/moses/dataset/data/test_scaffolds.csv.gz \
+       --train_path ./moses/moses/dataset/data/train.csv.gz \
+       --gen_path ../moses/aae/aae_gen.csv \
+       --device sdaa:0 \
+       --n_jobs 8
+```
+✅ 先生成30000个分子，在进行测试
+✅ 实际跑在SDAA上（`torch.sdaa.is_available()=True`, cuda=False）
+
+生成约29分钟左右
+评估约：50-1h左右
+
+## 六、精度性能对比（CUDA vs SDAA）
+
+在 10.10.6.21（A100 整卡 40GB，`moses`）与龙芯 SDAA 分别跑同一参数（deterministic）。
+
+### 6.1 全功能性能对比（纯设计时间，不含模型加载）
+{"stage": "sample", "seconds": 1750.1855173148215, "model": "aae", "n_samples": 30000, "device": "sdaa:0"}
+{"stage": "sample", "seconds": 85.63954997505061, "model": "aae", "n_samples": 30000, "device": "cuda:0"}
+{"stage": "eval", "seconds": 230.30917135393247, "n_gen": 30000, "device": "cuda:0"}
+{"stage": "eval", "seconds": 6708.902593437582, "n_gen": 30000, "device": "sdaa:0"}
+{"stage": "sample", "seconds": 414.95673561503645, "model": "char_rnn", "n_samples": 30000, "device": "cuda:0"}
+{"stage": "sample", "seconds": 6279.572176788002, "model": "char_rnn", "n_samples": 30000, "device": "sdaa:0"}
+{"stage": "eval", "seconds": 252.1902052690275, "n_gen": 30000, "device": "cuda:0"}
+{"stage": "eval", "seconds": 5960.138227010146, "n_gen": 30000, "device": "sdaa:0"}
+{"stage": "sample", "seconds": 67.23693026509136, "model": "organ", "n_samples": 30000, "device": "cuda:0"}
+{"stage": "sample", "seconds": 1429.3478530216962, "model": "organ", "n_samples": 30000, "device": "sdaa:0"}
+{"stage": "eval", "seconds": 279.6129688509973, "n_gen": 30000, "device": "cuda:0"}
+{"stage": "eval", "seconds": 8095.549381699413, "n_gen": 30000, "device": "sdaa:0"}
+{"stage": "sample", "seconds": 54.706242186017334, "model": "vae", "n_samples": 30000, "device": "cuda:0"}
+{"stage": "sample", "seconds": 1814.3327716235071, "model": "vae", "n_samples": 30000, "device": "sdaa:0"}
+{"stage": "eval", "seconds": 242.85762743500527, "n_gen": 30000, "device": "cuda:0"}
+{"stage": "eval", "seconds": 6025.415419355035, "n_gen": 30000, "device": "sdaa:0"}
+
+
+| 模式 | 模型 | CUDA | SDAA | 差距 |
+|-----|-----|------|------|-------|
+| sample | AAE | 85.64s | 1750.19s| 20x |
+| eval | AAE | 230.31s | 6708.91s | 29x |
+| sample | char_rnn | 414.95s | 6279.57s| 15x |
+| eval | char_rnn | 252.19s | 5960.13s | 23x |
+| sample | organ | 67.23s | 1429.34s| 21x |
+| eval | organ | 279.61s | 8095.54s | 28x |
+| sample | vae | 54.70s | 1814.33s| 33x |
+| eval | vae | 242.85s | 6025.41s | 24x |
+
+
+
+### 6.2 精度结论
+| platform | model | valid | unique@1000 | unique@10000 | FCD/Test | SNN/Test | Frag/Test | Scaf/Test | FCD/TestSF | SNN/TestSF | Frag/TestSF | Scaf/TestSF | IntDiv | IntDiv2 | Filters | logP | SA | QED | weight | Novelty |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| CUDA | AAE | 0.7374666666666667 | 1.0 | 0.9981 | 36.2101829594897 | 0.2492432343396199 | 0.35296217585393785 | 0.011997351047714377 | 37.13865145988015 | 0.2421506422633634 | 0.35198310811654576 | 0.00024527013192376934 | 0.8473346922869921 | 0.8406234783274753 | 0.0 | 1.3428893525502048 | 3.1391872015775935 | 0.4188537400378575 | 165.3667972009419 | 1.0 |
+| SDAA | AAE | 0.7363999999999999 | 1.0 | 0.9976 | 35.83773125113949 | 0.2487676900804917 | 0.9307039729272629 | 0.011864950502252114 | 36.776900209633666 | 0.24149147287771988 | 0.9456218393296293 | 0.00016446387805479912 | 0.8474909947505891 | 0.8407366882906615 | 0.0 | 1.3407717569772326 | 3.134307232680421 | 0.41865675286813103 | 164.96955974274334 | 1.0 |
+| CUDA | char_rnn | 0.9592666666666667 | 1.0 | 1.0 | 32.1634130619289 | 0.29304209953116134 | 0.7861668611209558 | 0.0742741860903462 | 32.95321416597331 | 0.2853924492422606 | 0.7812300280112847 | 0.02136659449493883 | 0.8429013510951847 | 0.836738592105962 | 0.0 | 1.0541850541205378 | 2.765251063538221 | 0.45674928620766786 | 221.15755367102886 | 1.0 |
+| SDAA | char_rnn | 0.9590333333333333 | 1.0 | 0.9999 | 31.870406948792592 | 0.29313017758304344 | 0.7921043187941395 | 0.06464250639700109 | 32.66293645396894 | 0.2854029902755429 | 0.787389851665243 | 0.023885444181305115 | 0.8426156540049744 | 0.8364540895617699 | 0.0 | 1.0784226443248963 | 2.7662277285816073 | 0.4563424999715764 | 220.3101389886081 | 1.0 |
+| CUDA | organ | 0.9457333333333333 | 0.44 | 0.1669 | 64.39605882909703 | 0.2919600214218322 | 0.6147533045890408 | 0.07809523313019351 | 65.43010039297857 | 0.26207165571419927 | 0.6034197459706834 | 0.02106734542189026 | 0.6439816043461761 | 0.6300937213475757 | 0.0 | 32.913385868093286 | 1.6220308593086858 | 0.7510216855648394 | 1020.6923953062953 | 1.0 |
+| SDAA | organ | 0.9444333333333333 | 0.427 | 0.1609 | 64.06369070533368 | 0.29217977607510653 | 0.6181697097893518 | 0.08248086251969378 | 65.09730621020124 | 0.2620863839492196 | 0.6066716942994215 | 0.07346981400297647 | 0.6439543212484147 | 0.6301016859417956 | 0.0 | 32.9214396028376 | 1.623084072289316 | 0.7510165670893632 | 1020.7522398210899 | 1.0 |
+| CUDA | vae | 0.9011333333333333 | 1.0 | 0.9999 | 32.555060047338905 | 0.2921804257771836 | 0.766837970615831 | 0.07920603341462262 | 33.34703724416436 | 0.28441133431546245 | 0.7619763446368084 | 0.01860851474974623 | 0.8424439616175872 | 0.8360523380265776 | 0.0 | 1.0832978850904356 | 2.745268939012376 | 0.45222962467937833 | 213.4268097961891 | 1.0 |
+| SDAA | vae | 0.9010333333333334 | 1.0 | 0.9998 | 32.45019700493719 | 0.2924868901951376 | 0.7682571524144514 | 0.0675980281832479 | 33.25616913069647 | 0.28455873305388496 | 0.7632487670445082 | 0.022645420581467568 | 0.8425003417107528 | 0.8361126469726629 | 0.0 | 1.06572055812814 | 2.759382717704083 | 0.452148081885088 | 213.40447882569987 | 1.0 |
+
+
+
+### 6.3 性能结论
+
+- A100 上 nn.LSTM 走 cuDNN 的融合/持久化 RNN，单步对 batch=32 是亚毫秒级（~0.3ms 一步，而不是一“样本”）；SDAA 没有 cuDNN，torch_sdaa 用逐时间步的通用 cell kernel，小 batch/单时间步时占用率差。→ 放大到 100 步串行，就是 ~20x。
+- AAE 是100 步串行自回归，每步一次 LSTM。这次是 30000 条、run.py 默认 n_batch=32，所以约 30000/32 × 100 ≈ 9.4 万 次微型 decoder 调用。对一步 decoder（batch=128）做了设备侧 profiling：
+```python
+total device time = 48.8 ms
+  47.49 ms  calls=2  lstm_cell_forward     <-- 97% 全在这
+   0.12 ms  Memcpy DtoH (is_end.sum 同步)
+```
+即 一步的全部设备时间几乎都在 torch_sdaa 的 lstm_cell_forward，embedding/linear/softmax 都可忽略。而这个 kernel 的耗时几乎随 batch 线性增长
+
+- scripts/eval.py 只在 get_all_metrics(device=...) 里把部分指标放设备（metrics.py:113-134）：FCD(ChemNet 特征提取) + SNN + IntDiv。其中 IntDiv 是 30000×30000 的 O(n²) pairwise tanimoto 在设备上算，ChemNet 是小 char-CNN 要跑 3~6 万条分子，batch=512。这些恰是 SDAA 相对 A100 最弱的“小模型/大不规则批/小算子”场景；其余 valid/unique/Filters/Novelty 是 CPU RDKit，两端一样。→ 29x。
+
+### 6.4 各功能在 SDAA 的可用性
+
+无
+
+## 七、踩坑记录
+
+| # | 坑 | 根因 | 解决 |
+|---|----|------|------|
+| 1 | rdkit版本低 | 新版本的rdkit.six已删除 | 手动实现six中导入的方法 |
+| 2 | pandas版本低 | 新版本移除了append方法 | 使用新版本的concat替换 |
+| 3 | lengths被放在了设备上计算 | torch要求lengths是一个ID CPU int64 tensor | 改成lengths.cpu() |
+| 4 | torch版本差异 | 旧版 PyTorch 把缺失梯度表示成 0 所以没暴露，新版默认表示成 None，裁剪就崩了 | 加一个判空操作 |
+| 5 | weights_only 问题 | torch 2.6+ 默认 weights_only=True，而 config.pt 是 argparse.Namespace、vocab.pt 是自定义类，不能用 weights-only 反序列化。 | 给 torch.load 加 weights_only=False 即可 |
+| 6 | torch版本中对mask变严格 | 旧代码用 torch.uint8 当布尔掩码，新版 PyTorch 要求 bool。| 将torch.uint8换成torch.bool |
+| 7 | pandas 2.x 已移除 squeeze | squeeze在2.x版本之后已经被移除了，源代码中使用了squeeze | 去除squeeze替换等价写法 |
