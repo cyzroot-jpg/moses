@@ -1,0 +1,1921 @@
+From e49ab99ebc454ba67a280b5e9fc9554fd970cae3 Mon Sep 17 00:00:00 2001
+From: cyz <cyz@qq.com>
+Date: Thu, 8 Oct 2026 10:45:03 +0800
+Subject: [PATCH 1/2] feat(moses-adpat): add moses-adpat
+
+---
+ Deep-Drug-Coder                         |      1 +
+ SDAA_AAE_MIGRATION_REPORT.md            |    333 +
+ download_lfs.sh                         |     12 +
+ moses/aae/model.py                      |     11 +-
+ moses/aae/trainer.py                    |      4 +-
+ moses/char_rnn/model.py                 |      3 +-
+ moses/dataset/gdbdata/GDB_scaffolds.csv |  10506 +
+ moses/dataset/gdbdata/GDB_test.csv      | 211705 ++++++
+ moses/dataset/gdbdata/GDB_train.csv     | 846813 +++++++++++++++++++++
+ moses/dataset/pubdata/pub_scaffolds.csv |   7716 +
+ moses/dataset/pubdata/pub_test.csv      | 194266 +++++
+ moses/dataset/pubdata/pub_train.csv     | 777058 +++++++++++++++++++
+ moses/device_utils.py                   |    210 +
+ moses/download_lfs.sh                   |     12 +
+ moses/logs/aae,_s1.log                  |      1 +
+ moses/logs/char_rnn,_s1.log             |      1 +
+ moses/logs/organ_s1.log                 |      1 +
+ moses/logs/vae,_s1.log                  |      1 +
+ moses/metrics/SA_Score/sascorer.py      |      8 +-
+ moses/metrics/metrics.py                |     10 +-
+ moses/metrics/utils.py                  |      6 +-
+ moses/organ/model.py                    |     11 +-
+ moses/script_utils.py                   |     82 +-
+ moses/vae/model.py                      |      9 +-
+ sc.sh                                   |    167 +
+ scripts/checkpoints/aae_config.pt       |    Bin 0 -> 2047 bytes
+ scripts/checkpoints/aae_vocab.pt        |    Bin 0 -> 1785 bytes
+ scripts/debug.py                        |    134 +
+ scripts/eval.py                         |     31 +-
+ scripts/logs/aae,_s1.log                |      1 +
+ scripts/logs/char_rnn,_s1.log           |      1 +
+ scripts/logs/organ_s1.log               |      1 +
+ scripts/logs/vae,_s1.log                |      1 +
+ scripts/run.py                          |     16 +-
+ scripts/sample.py                       |     50 +-
+ scripts/train.py                        |     12 +-
+ scripts/verify_aae_inference.py         |    224 +
+ time/eval.json                          |      0
+ time/evla.json                          |      1 +
+ time/evla_char_rnn.json                 |      1 +
+ time/evla_orgn.json                     |      1 +
+ time/evla_vae.json                      |      1 +
+ time/smaple.json                        |      1 +
+ 43 files changed, 2049346 insertions(+), 77 deletions(-)
+ create mode 160000 Deep-Drug-Coder
+ create mode 100644 SDAA_AAE_MIGRATION_REPORT.md
+ create mode 100644 download_lfs.sh
+ create mode 100644 moses/dataset/gdbdata/GDB_scaffolds.csv
+ create mode 100644 moses/dataset/gdbdata/GDB_test.csv
+ create mode 100644 moses/dataset/gdbdata/GDB_train.csv
+ create mode 100644 moses/dataset/pubdata/pub_scaffolds.csv
+ create mode 100644 moses/dataset/pubdata/pub_test.csv
+ create mode 100644 moses/dataset/pubdata/pub_train.csv
+ create mode 100644 moses/device_utils.py
+ create mode 100644 moses/download_lfs.sh
+ create mode 100644 moses/logs/aae,_s1.log
+ create mode 100644 moses/logs/char_rnn,_s1.log
+ create mode 100644 moses/logs/organ_s1.log
+ create mode 100644 moses/logs/vae,_s1.log
+ create mode 100644 sc.sh
+ create mode 100644 scripts/checkpoints/aae_config.pt
+ create mode 100644 scripts/checkpoints/aae_vocab.pt
+ create mode 100644 scripts/debug.py
+ create mode 100644 scripts/logs/aae,_s1.log
+ create mode 100644 scripts/logs/char_rnn,_s1.log
+ create mode 100644 scripts/logs/organ_s1.log
+ create mode 100644 scripts/logs/vae,_s1.log
+ create mode 100644 scripts/verify_aae_inference.py
+ create mode 100644 time/eval.json
+ create mode 100644 time/evla.json
+ create mode 100644 time/evla_char_rnn.json
+ create mode 100644 time/evla_orgn.json
+ create mode 100644 time/evla_vae.json
+ create mode 100644 time/smaple.json
+
+diff --git a/Deep-Drug-Coder b/Deep-Drug-Coder
+new file mode 160000
+index 0000000..5c8d30e
+--- /dev/null
++++ b/Deep-Drug-Coder
+@@ -0,0 +1 @@
++Subproject commit 5c8d30e842e5bd1206f9d2e4f7dc1977159123f3
+diff --git a/SDAA_AAE_MIGRATION_REPORT.md b/SDAA_AAE_MIGRATION_REPORT.md
+new file mode 100644
+index 0000000..32ca751
+--- /dev/null
++++ b/SDAA_AAE_MIGRATION_REPORT.md
+@@ -0,0 +1,333 @@
++# MOSES AAE 模型 SDAA 适配与 CPU 对比测试报告
++
++- 项目：`/data01/tuyilist/cyz/moses`（Molecular Sets / MOSES）
++- 目标模型：Adversarial Autoencoder（AAE，SMILES 生成）
++- 目标：迁移到太初 SDAA，实现 **SDAA / CUDA / CPU 三端兼容**，审计自定义算子，覆盖全部推理功能，并与 CPU 做对比测试
++- 测试日期：2026-09-23
++- 结果数据：`cyz_linshi/aae/sdaa_test/aae_device_results.json`
++
++---
++
++## 1. 探测结果
++
++### 1.1 运行环境
++
++| 项 | 值 |
++|---|---|
++| Host IP | 10.71.13.47 |
++| CPU 架构 | loongarch64（`cpuinfo` 报 unsupported，可忽略） |
++| CPU / 内存 | 128 核 / 约 1 TB |
++| PyTorch | 2.12.0（CPU+CUDA 名空间，`torch.version.cuda == None`） |
++| torch_sdaa | 3.3.0b0+gitb716a30 |
++| SDAA Driver / Runtime | 3.4.0 / 3.3.0b0 |
++| TecoDNN / TecoBLAS / CustomDNN / TCCL | 3.3.0b0 |
++| 加速卡 | 8 张 `TECO_AICARD_01`（`torch.sdaa.device_count() == 32`，单卡 64 GB） |
++| 关键依赖 | rdkit 2026.9.1, fcd-torch 1.0.7, numpy 1.26.4, pandas 3.0.3, scipy 1.16.1, tqdm 4.66.5 |
++
++> 环境要点：本机 **无 NVIDIA CUDA 设备**（`torch.cuda.is_available() == False`），因此本次实测为 **SDAA vs CPU**；CUDA 分支通过统一的设备抽象层实现，在 CUDA 机器上无需改代码即可运行。
++
++### 1.2 项目结构
++
++```
++moses/
++├── moses/                      # 核心库
++│   ├── aae/                    # ★ 本次目标：Adversarial Autoencoder
++│   │   ├── config.py           # 超参（embedding=32, enc_hidden=512, dec_hidden=512, latent=128 ...）
++│   │   ├── model.py            # Encoder / Decoder / Discriminator / AAE
++│   │   ├── trainer.py          # 预训练 + 对抗训练，CharVocab，collate
++│   │   └── __init__.py
++│   ├── char_rnn/ vae/ organ/   # 其它生成模型（同接口）
++│   ├── latentgan/              # 依赖 heteroencoder / DDC（TF）
++│   ├── baselines/              # HMM / NGram / Combinatorial（纯 Python）
++│   ├── metrics/                # FCD(ChemNet) / SNN / Frag / Scaf / IntDiv / Filters ...
++│   ├── dataset/                # 内置 train/test/test_scaffolds (.csv.gz)
++│   ├── device_utils.py         # ★ 新增：SDAA/CUDA/CPU 设备兼容层
++│   ├── script_utils.py         # 公共参数、set_seed、设备校验
++│   ├── models_storage.py       # 模型注册表
++│   └── interfaces.py           # MosesTrainer 抽象接口
++├── scripts/
++│   ├── train.py sample.py eval.py run.py   # ★ 训练/采样/评测/编排入口
++│   ├── verify_aae_inference.py             # ★ 新增：跨设备一致性与性能测试
++│   ├── debug.py                # FCD 数值问题排查（原有）
++│   └── prepare_dataset.py split_dataset.py print_table.py ...
++├── checkpoint/aae/             # 预训练权重 model.pt / config.pt / vocab.pt
++├── cyz_linshi/                 # 用户临时工作区（生成结果/测试输出）
++├── Deep-Drug-Coder/            # 独立包（Keras/TF，非本次推理路径）
++├── molvecgen/                  # 独立包（LatentGAN 向量化）
++└── data/ moses/dataset/data/   # 数据集（LFS）
++```
++
++### 1.3 AAE 模型结构
++
++MOSES AAE 是字符级 SMILES 对抗自编码器，共享一个 Embedding 层，三个子网络：
++
++```
++                        ┌───────────────────────────── Encoder ─────────────────────────────┐
++  SMILES ids (N,L) ──▶ Embedding(41,32) ──▶ Bi-LSTM(in32,h512,1layer) ──▶ 取末状态 reshape ──▶ Linear(1024→128) ──▶ z (N,128)
++                                                                                                              │
++                                           z ──▶ Linear(128→512) ──▶ h0=0, c0 ──┐                          │
++                                                                                 ▼                          │
++                       ┌──────────────────── Decoder ──────────────────────┐   ┌── 先验 N(0,1) ──┐
++  prev token ──▶ Embedding(共享) ──▶ LSTM(in32,h512,2layers) ──▶ Linear(512→41) ──▶ logits ──▶ softmax ──▶ Categorical.sample
++                                                                                 │
++                       ┌──────────────────── Discriminator ─────────────────┐   │
++                       z / prior ──▶ Linear(128→640) ▶ ELU ─▶ Linear(640→256) ▶ ELU ─▶ Linear(256→1)
++```
++
++| 子模块 | 结构 | 参数量 |
++|---|---|---:|
++| Embedding（共享） | `Embedding(41, 32)`, `padding_idx=pad` | — |
++| Encoder | Bi-LSTM(32→512, 1 层) + `Linear(1024→128)` | 2,368,928 |
++| Decoder | `Linear(128→512)` + LSTM(32→512, 2 层) + `Linear(512→41)` | 3,307,849 |
++| Discriminator | MLP 128→640→256→1（ELU） | 246,913 |
++| **合计** | vocab=41，latent=128 | **5,922,378** |
++
++推理路径：`scripts/sample.py::main` → `AAE.sample(n_batch, max_len)` → 逐步自回归解码，**100 步串行**（`max_len`），每步 batch 内并行。这就是性能瓶颈所在（见 §5）。
++
++### 1.4 依赖清单
++
++- 运行 AAE 推理必需：`torch`、`torch_sdaa`（SDAA 时）、`rdkit`、`numpy`、`pandas`、`tqdm`。
++- 评测（`eval.py`）额外：`fcd-torch`、`scipy`。
++- 训练额外：`torch.optim`。
++- 非必需/其它模型：`pomegranate`（HMM baseline）、`tensorflow/keras`（Deep-Drug-Coder / LatentGAN HeteroEncoder）、`molvecgen`。
++
++---
++
++## 2. 自定义算子审计（关键结论）
++
++对全仓库做了 `*.cu / *.cuh / *.cpp / cpp_extension / load_inline / CUDAExtension / torch.ops / __global__` 搜索：
++
++> **AAE 推理链路不包含任何自定义算子**，全部为标准 ATen 算子，无需绕过。
++
++AAE 用到的算子全部有 SDAA 实现：
++
++| 算子 | 用途 | SDAA |
++|---|---|---|
++| `Embedding` | token 嵌入 | ✅ 已实测 |
++| `LSTM`（单向 + 双向） | 编/解码 | ✅ 已实测 |
++| `Linear` | 投影 | ✅ |
++| `pack_padded_sequence` / `pad_packed_sequence` | 变长序列 | ✅（见下） |
++| `softmax` | 概率 | ✅ |
++| `Categorical.sample`（multinomial） | 采样 | ✅ 已实测 |
++| `CrossEntropyLoss` / `BCEWithLogitsLoss`（训练） | 损失 | 标准 |
++
++唯一需要针对 SDAA/新版 PyTorch 适配的点（**不是自定义算子，只是参数/数据类型约束**）：
++
++1. `pack_padded_sequence(x, lengths.cpu(), batch_first=True)` —— `lengths` 必须在 CPU（CUDA/SDAA 通用要求）。原代码在 CUDA 上偶然可用，SDAA 上必须显式 `.cpu()`。`moses/aae/model.py:27,57`。
++2. `is_end` 由 `torch.uint8` 改为 `torch.bool` —— 新版 PyTorch + SDAA 对 uint8 算术支持不佳。`moses/aae/model.py:156`。
++3. 反向传播中 `parameter.grad` 可能为 `None`，需判空后再 `clamp_`。`moses/aae/trainer.py:178`。
++
++其它包中的 GPU 相关写法**不属于本推理路径**：
++- `Deep-Drug-Coder/ddc_pub/ddc_v3.py` 使用 TensorFlow 的 `CuDNNLSTM`（TF 后端，非 PyTorch，不参与 MOSES AAE 推理）。
++- `moses/latentgan/model.py` 使用 `torch.cuda.FloatTensor`，属 LatentGAN（本次不涉及），如需迁移需单独处理。
++
++---
++
++## 3. 迁移改动清单（实现 SDAA / CUDA 双兼容）
++
++核心思想：**设备选择集中到一个兼容层，业务代码不再硬编码 `torch_sdaa` / `torch.cuda`**。
++
++### 3.1 新增 `moses/device_utils.py`
++
++- `sdaa_available()` / `cuda_available()` / `available_backends()`
++- `auto_device()`：自动选择 `sdaa > cuda > cpu`
++- `resolve_device(device)`：把 `None/'auto'/'cpu'/'cuda:N'/'sdaa:N'` 规范化成具体字符串
++- `build_device(device)`：返回 `torch.device` 并调用对应后端的 `set_device`
++- `seed_everything(seed)`：同时 seed python / numpy / cuda / sdaa
++- 关键：`torch_sdaa` **惰性导入**（`try/except`），因此在没有 SDAA 的 CUDA/CPU 机器上 import 不会失败，自动回退。
++
++### 3.2 修改
++
++| 文件 | 改动 |
++|---|---|
++| `moses/script_utils.py` | 修复 `torch_device` 校验器（原实现缩进错误导致校验体不可达）；接受 `cpu/cuda:N/sdaa:N/auto`；`--device` 默认改为 `None`（自动探测）；`set_seed` 委托给 `seed_everything` |
++| `scripts/train.py` | 删除硬编码 `import torch_sdaa`；用 `build_device` 选择设备；`torch.load(..., weights_only=False)` 兼容 torch≥2.6 |
++| `scripts/sample.py` | 同上；`import torch_sdaa` 移除，设备/`torch.load` 统一处理 |
++| `scripts/run.py` | `--device` 默认 `None`→`resolve_device`；编排 train/sample/eval 时下发具体设备串 |
++| `scripts/eval.py` | `--device` 经 `resolve_device` 规范化，支持 `sdaa:N` 传递给 FCD/ChemNet |
++| `moses/aae/model.py` | `lengths.cpu()`；`is_end` 改 `bool` |
++| `moses/aae/trainer.py` | `parameter.grad is not None` 判空 |
++
++### 3.3 兼容性验证（自动探测）
++
++```
++backends: ['sdaa', 'cpu']      # 本机（无 CUDA）
++auto:     sdaa
++None     -> sdaa:0
++'cpu'    -> cpu
++'sdaa'   -> sdaa:0
++'sdaa:3' -> sdaa:3
++'cuda:0' -> RuntimeError: CUDA device requested but CUDA is not available   # 预期报错
++```
++
++在 CUDA 机器上，`torch_sdaa` 导入失败后 `auto_device()` 自动回退为 `cuda`，`--device cuda:0` 正常走 `torch.cuda.set_device`，**无需改动代码**。
++
++---
++
++## 4. 推理功能覆盖
++
++| 推理功能 | 入口 | CPU | SDAA | 说明 |
++|---|---|:--:|:--:|---|
++| 采样（批量自回归生成） | `scripts/sample.py` | ✅ | ✅ | 用真实 checkpoint 各生成 256 条 |
++| 采样（可编程 API） | `AAE.sample()` | ✅ | ✅ | `verify_aae_inference.py` |
++| 编码器前向 | `AAE.encoder_forward()` | ✅ | ✅ | 一致性测试 |
++| 解码器前向（latent states） | `AAE.decoder_forward()` | ✅ | ✅ | 一致性测试 |
++| 指标评测（SNN/Frag/Scaf/IntDiv/Filters/性质/Novelty…） | `scripts/eval.py` | ✅ | ✅ | 见 §5.4 |
++| FCD（ChemNet） | `fcd_torch` | ⚠️NaN | ⚠️NaN | **设备无关**的数值问题，见 §5.4 |
++| 编排（train→sample→eval） | `scripts/run.py` | ✅ | ✅ | 设备串正确下发 |
++
++> FCD 的 NaN 与本仓库已知问题一致（`scripts/debug.py` 即为排查该问题而写）。经实测定位：**不是秩亏**（协方差满秩 rank=512），而是 `sqrtm` 的数值不适定问题；详见 §5.4.1。CPU 与 SDAA 均复现，**非迁移缺陷**。
++
++---
++
++## 5. CPU vs SDAA 对比测试
++
++测试脚本：`scripts/verify_aae_inference.py`（同一份权重、eval 模式、同一 seed 与 batch）。
++
++```bash
++python scripts/verify_aae_inference.py \
++  --model_load  checkpoint/aae/model.pt \
++  --config_load checkpoint/aae/config.pt \
++  --vocab_load  checkpoint/aae/vocab.pt \
++  --devices cpu sdaa:0 \
++  --n_samples 1024 --n_batch 512 --max_len 100 --seed 42 \
++  --outdir cyz_linshi/aae/sdaa_test
++```
++
++### 5.1 数值一致性（正确性）
++
++对同一批真实 test SMILES，比较 CPU 与 SDAA 的 **Encoder 输出**和**一步 Decoder logits**：
++
++| 指标 | CPU(参考) | SDAA | 结论 |
++|---|---:|---:|---|
++| Encoder 最大绝对误差 | 0 | **1.57e-05** | `allclose(atol=1e-3)` ✅ |
++| Decoder 最大绝对误差 | 0 | **9.54e-06** | `allclose(atol=1e-3)` ✅ |
++
++→ SDAA 数值与 CPU 等价（差异仅为浮点累加顺序），**迁移正确性通过**。
++
++### 5.2 端到端采样（n=1024, batch=512, max_len=100）
++
++| 设备 | 有效分子 | 有效率 | 有效唯一 | 唯一率 | 墙钟时间(s) | 吞吐(smiles/s) |
++|---|---:|---:|---:|---:|---:|---:|
++| CPU | 756 | 0.7383 | 756 | 0.7383 | 12.88 | **79.5** |
++| SDAA:0 | 737 | 0.7197 | 737 | 0.7197 | 28.14 | **36.4** |
++
++- 两端有效率、唯一率基本一致（统计噪声内），说明生成质量等价。
++- 本模型 **CPU 吞吐高于 SDAA**：AAE 每步计算量极小但需 **100 次串行解码**，属延迟受限；128 核 CPU 的 BLAS 对小矩阵反而高效，而 SDAA 每步受 kernel launch / 同步开销主导。
++
++### 5.3 批大小扩展性（n=1024）
++
++| batch | CPU (smiles/s) | SDAA (smiles/s) |
++|---:|---:|---:|
++| 128 | 25.0 | 26.9 |
++| 512 | 98.2 | 36.6 |
++| 2048 | 127.4 | 45.2 |
++
++- 小 batch(128) 两者相当；增大 batch 时 CPU 借助多核线性加速，SDAA 提升有限。
++- 结论：**对该串行 RNN 小算子负载，SDAA 优势不明显**；SDAA 更适合大矩阵/可并行的算子。若需提速，应减少串行步数（如批内并行/近似解码）或将计算合并，而非单纯换设备。
++
++### 5.4 指标评测
++
++用 `scripts/eval.py` 跑真实生成集（同一份结果在 CPU 与 SDAA 上计算）：
++
++| 指标 | CPU (1024 样本) | SDAA (30k 样本) |
++|---|---:|---:|
++| valid | 0.7383 | 0.7364 |
++| unique@1000 | 1.0 | 1.0 |
++| unique@10000 | — | 0.9976 |
++| SNN/Test | 0.2486 | 0.2488 |
++| Frag/Test | 0.3465 | 0.9307 |
++| Scaf/Test | 0.00385 | 0.01186 |
++| IntDiv | 0.8475 | 0.8475 |
++| IntDiv2 | 0.8380 | 0.8407 |
++| Filters | 0.0 | 0.0 |
++| Novelty | 1.0 | 1.0 |
++| FCD/Test | NaN | NaN |
++
++- SNN/IntDiv/Novelty 等**设备无关指标在两端一致**，佐证 SDAA 推理结果与 CPU 等价。
++- Frag/Scaf 差异来自两次评测的输入集不同（1024 vs 30k），非设备差异。
++- **FCD 两端均为 NaN/报错**，原因见下（与设备无关）。
++
++#### 5.4.1 FCD 失败的真实原因（已用 `debug.py` 实测）
++
++Fréchet 距离的计算式（`fcd_torch/utils.py::calculate_frechet_distance`）：
++
++```
++P        = sigma_ref · sigma_gen                 # 两个 512×512 协方差之积
++covmean  = sqrtm(P)                              # scipy.linalg.sqrtm（Schur 法）
++# 若 covmean 非有限 → 用 (sigma+1e-6·I) 重试
++# 若 covmean 有虚部且 diag(imag) 超出 1e-3 → raise "Imaginary component"
++FCD = ||mu_ref - mu_gen||² + tr(sigma_ref) + tr(sigma_gen) - 2·tr(covmean)
++```
++
++> **关键：整个 `sqrtm` / 协方差 / FCD 计算都是纯 CPU 的 numpy+scipy。**
++> `fcd_torch` 的 `device` 参数只决定 ChemNet 特征在哪块卡上抽取（`get_predictions` 最后 `.to('cpu').numpy()`），
++> 之后的 `np.cov` 与 `linalg.sqrtm` 与设备无关。因此 **CUDA/SDAA 本身不会改变 FCD 的数值成败**。
++
++在真实生成集上实测（`scripts/debug.py`）：
++
++| 量 | 1024 样本集 | 30k 样本集 | 参照 test 集 |
++|---|---:|---:|---:|
++| 有效唯一分子数 | 737 | 22014 | — |
++| ChemNet 特征 | (737,512), nan=0, 全部唯一 | (22014,512), nan=0, 全部唯一 | — |
++| `sigma_gen` 秩 | **512（满秩）** | **512（满秩）** | 512 |
++| `sigma_gen` 条件数 | 2.65e+07 | 1.04e+06 | 4.52e+05 |
++| `sigma_gen` 最小特征值 | **7.3e-08** | **1.76e-06** | 5.55e-06 |
++| `sigma_ref·sigma_gen` 最小实特征值 | **1.26e-11** | **6.65e-11** | — |
++| `sqrtm` 结果 | 虚部 0.142 → **raise** | 非有限 → 重试后 **nan** | — |
++| `‖mu_ref−mu_gen‖²` | 15.86 | 15.83 | — |
++
++**结论（修正之前的"秩亏"说法）：**
++
++1. 协方差**满秩**（rank=512），无负特征值，并非秩亏/特征退化。
++2. 真正原因是 **`sqrtm` 的数值不适定**：生成集的 ChemNet 特征协方差 `sigma_gen` 高度病态——最小特征值低至 7e-8~2e-6（条件数 1e6~1e7）。两者相乘后 `sigma_ref·sigma_gen` 的条件数升到约 **1e11**，最小特征值 ~1e-11 已接近 float64 的数值噪声底。
++3. 对这样接近奇异、且非对称（`sigma_ref·sigma_gen` 本身不对称）的矩阵做矩阵平方根，`scipy.linalg.sqrtm` 会给出 **虚部 0.14** 或 **非有限值**（scipy 也发 `LinAlgWarning: Matrix is ill-conditioned`）。前者被 fcd_torch 的 `diag(imag)>1e-3` 判据拦截报错，后者经 `+1e-6·I` 重试（正则量级远小于 1e-11）仍为 nan。
++4. 走"报错"还是"nan"只取决于极微小的浮点差异（样本数、batch 顺序、CPU/SDAA 舍入），因此**同一文件 CPU 可能 nan、SDAA 可能报错**——这正说明它是**阈值敏感的数值问题，而非设备缺陷**。
++5. **根因在生成质量**：`‖mu_ref−mu_gen‖² ≈ 15.8`（正常 FCD 约 1~2），说明该 checkpoint 生成的分子严重偏离 MOSES test 分布（多为 100 字符长串、约 3% 字符为 ChemNet 词表外的 `*`、26% 解析失败），导致特征协方差病态。这属于**该预训练权重/数据问题**，与 SDAA 迁移无关。
++
++**可选修复方向：** ① 更换/重训为规范 MOSES AAE 权重（生成短小、类药 SMILES，FCD 自然回落）；② 对协方差做更强正则（把 `eps=1e-6` 改为与尺度匹配的值，如 `1e-6·tr(sigma)/d`）或改用 PSD 稳定的平方根（特征分解 `V sqrt(Λ) Vᵀ`）；③ 评估时改用分布距离更鲁棒的替代指标。
++
++### 5.5 生成产物
++
++- `cyz_linshi/aae/sdaa_test/aae_gen_cpu.csv`（CPU，1024）
++- `cyz_linshi/aae/sdaa_test/aae_gen_sdaa_0.csv`（SDAA，1024）
++- `cyz_linshi/aae/sdaa_test/gen_cpu_cli.csv` / `gen_sdaa_cli.csv`（CLI 256）
++- `cyz_linshi/aae/sdaa_test/aae_device_results.json`（原始结果）
++
++---
++
++## 6. 结论与建议
++
++1. **迁移完成且双兼容**：`--device cpu/cuda:N/sdaa:N/auto` 全支持；SDAA 与 CUDA 由同一套 `device_utils` 抽象，CUDA 机器零改动运行。
++2. **自定义算子**：AAE 推理链路**无自定义算子**，全部为标准算子，**无需绕过**；仅做了 3 处参数/类型/判空适配。
++3. **推理全覆盖**：采样、编码/解码、指标评测在 SDAA 上均通过；仅 FCD 因**设备无关的数值问题**返回 NaN（CPU 同样 NaN）。
++4. **正确性**：SDAA 与 CPU 数值等价（误差 ~1e-5）。
++5. **性能**：本 AAE 为 100 步串行小算子负载，**CPU 反超 SDAA**（batch=512 时 79.5 vs 36.4 smiles/s）；SDAA 在该类算子上的收益有限，属于预期现象。
++6. 建议：
++   - FCD NaN 单独跟进（`scripts/debug.py`，考虑对协方差加正则/降维或使用大样本）。
++   - LatentGAN 的 `torch.cuda.FloatTensor` 若需迁移，应改为 `device_utils` 的通用 tensor 创建方式。
++   - 若追求 SDAA 上更高吞吐，考虑将自回归解码的串行步数用 KV-cache / 批内并行规避，而非依赖 batch 增大。
++
++## 7. 复现命令
++
++```bash
++cd /data01/tuyilist/cyz/moses
++
++# 采样（CPU / SDAA）
++python scripts/sample.py aae --device cpu   --seed 7 --n_samples 256 --n_batch 256 \
++  --model_load checkpoint/aae/model.pt --config_load checkpoint/aae/config.pt \
++  --vocab_load checkpoint/aae/vocab.pt --gen_save /tmp/gen_cpu.csv
++python scripts/sample.py aae --device sdaa:0 --seed 7 --n_samples 256 --n_batch 256 \
++  --model_load checkpoint/aae/model.pt --config_load checkpoint/aae/config.pt \
++  --vocab_load checkpoint/aae/vocab.pt --gen_save /tmp/gen_sdaa.csv
++
++# 跨设备一致性 + 性能
++python scripts/verify_aae_inference.py --devices cpu sdaa:0 \
++  --model_load checkpoint/aae/model.pt --config_load checkpoint/aae/config.pt \
++  --vocab_load checkpoint/aae/vocab.pt \
++  --n_samples 1024 --n_batch 512 --outdir cyz_linshi/aae/sdaa_test
++
++# 指标评测
++python scripts/eval.py --gen_path cyz_linshi/aae/sdaa_test/aae_gen_sdaa_0.csv \
++  --device sdaa:0 --n_jobs 4
++```
+\ No newline at end of file
+diff --git a/download_lfs.sh b/download_lfs.sh
+new file mode 100644
+index 0000000..c930d1e
+--- /dev/null
++++ b/download_lfs.sh
+@@ -0,0 +1,12 @@
++#!/bin/bash
++cd /data01/tuyilist/cyz/moses
++base=https://media.githubusercontent.com/media/molecularsets/moses/master
++for f in \
++  moses/dataset/data/train.csv.gz \
++  moses/dataset/data/test.csv.gz \
++  moses/dataset/data/test_scaffolds.csv.gz \
++  moses/dataset/data/test_stats.npz \
++  moses/dataset/data/test_scaffolds_stats.npz ; do
++  echo "downloading $f"
++  curl -L "$base/$f" -o "$f"
++done
+diff --git a/moses/aae/model.py b/moses/aae/model.py
+index dd58078..ff1aade 100644
+--- a/moses/aae/model.py
++++ b/moses/aae/model.py
+@@ -23,7 +23,8 @@ class Encoder(nn.Module):
+         batch_size = x.shape[0]
+ 
+         x = self.embedding_layer(x)
+-        x = pack_padded_sequence(x, lengths, batch_first=True)
++        # x = pack_padded_sequence(x, lengths, batch_first=True)
++        x = pack_padded_sequence(x, lengths.cpu(), batch_first=True)
+         _, (_, x) = self.lstm_layer(x)
+         x = x.permute(1, 2, 0).contiguous().view(batch_size, -1)
+         x = self.linear_layer(x)
+@@ -52,7 +53,8 @@ class Decoder(nn.Module):
+             states = (h0, c0)
+ 
+         x = self.embedding_layer(x)
+-        x = pack_padded_sequence(x, lengths, batch_first=True)
++        # x = pack_padded_sequence(x, lengths, batch_first=True)
++        x = pack_padded_sequence(x, lengths.cpu(), batch_first=True)
+         x, states = self.lstm_layer(x, states)
+         x, lengths = pad_packed_sequence(x, batch_first=True)
+         x = self.linear_layer(x)
+@@ -148,7 +150,10 @@ class AAE(nn.Module):
+             ).fill_(self.vocabulary.bos)
+             one_lens = torch.ones(n_batch, dtype=torch.long,
+                                   device=self.device)
+-            is_end = torch.zeros(n_batch, dtype=torch.uint8,
++            # is_end = torch.zeros(n_batch, dtype=torch.uint8,
++            #                      device=self.device)
++
++            is_end = torch.zeros(n_batch, dtype=torch.bool,
+                                  device=self.device)
+ 
+             for i in range(max_len):
+diff --git a/moses/aae/trainer.py b/moses/aae/trainer.py
+index 1f06a25..bb8b25b 100644
+--- a/moses/aae/trainer.py
++++ b/moses/aae/trainer.py
+@@ -174,7 +174,9 @@ class AAETrainer(MosesTrainer):
+                 optimizers['discriminator'].zero_grad()
+                 total_loss.backward()
+                 for parameter in model.parameters():
+-                    parameter.grad.clamp_(-5, 5)
++                    # 修复
++                    if parameter.grad is not None:
++                        parameter.grad.clamp_(-5, 5)
+                 if i % (self.config.discriminator_steps + 1) == 0:
+                     optimizers['autoencoder'].step()
+                 else:
+diff --git a/moses/char_rnn/model.py b/moses/char_rnn/model.py
+index 70b00fb..a2c4c5f 100644
+--- a/moses/char_rnn/model.py
++++ b/moses/char_rnn/model.py
+@@ -28,7 +28,8 @@ class CharRNN(nn.Module):
+ 
+     def forward(self, x, lengths, hiddens=None):
+         x = self.embedding_layer(x)
+-        x = rnn_utils.pack_padded_sequence(x, lengths, batch_first=True)
++        # x = rnn_utils.pack_padded_sequence(x, lengths, batch_first=True)
++        x = rnn_utils.pack_padded_sequence(x, lengths.cpu(), batch_first=True)
+         x, hiddens = self.lstm_layer(x, hiddens)
+         x, _ = rnn_utils.pad_packed_sequence(x, batch_first=True)
+         x = self.linear_layer(x)
+diff --git a/moses/dataset/gdbdata/GDB_scaffolds.csv b/moses/dataset/gdbdata/GDB_scaffolds.csv
+new file mode 100644
+index 0000000..df61715
+--- /dev/null
+
+diff --git a/moses/device_utils.py b/moses/device_utils.py
+new file mode 100644
+index 0000000..73b862d
+--- /dev/null
++++ b/moses/device_utils.py
+@@ -0,0 +1,210 @@
++"""Device compatibility helpers for SDAA / CUDA / CPU.
++
++This module lets the MOSES code base run unchanged on three backends:
++
++* ``sdaa``  -- Tecorigin SDAA accelerators (requires ``torch_sdaa``)
++* ``cuda``  -- NVIDIA GPUs (requires a CUDA build of PyTorch)
++* ``cpu``
++
++Importing this module never requires ``torch_sdaa``: SDAA support is enabled
++lazily, only when an SDAA device is requested or auto-detected.  On a CUDA
++machine ``import torch_sdaa`` simply fails and the code falls back to CUDA.
++"""
++
++import importlib
++import random
++import time
++
++import numpy as np
++import torch
++
++
++__all__ = [
++    'sdaa_available', 'cuda_available', 'available_backends',
++    'auto_device', 'resolve_device', 'build_device', 'seed_everything',
++    'device_index', 'synchronize', 'warmup_device', 'DeviceTimer',
++]
++
++_SDAA_TRIED = False
++_SDAA_OK = False
++
++
++def _ensure_torch_sdaa():
++    """Import ``torch_sdaa`` at most once; return True if usable."""
++    global _SDAA_TRIED, _SDAA_OK
++    if not _SDAA_TRIED:
++        _SDAA_TRIED = True
++        try:
++            importlib.import_module('torch_sdaa')
++            _SDAA_OK = hasattr(torch, 'sdaa')
++        except Exception:
++            _SDAA_OK = False
++    return _SDAA_OK
++
++
++def sdaa_available():
++    return _ensure_torch_sdaa() and torch.sdaa.is_available()
++
++
++def cuda_available():
++    return torch.cuda.is_available()
++
++
++def available_backends():
++    backends = []
++    if sdaa_available():
++        backends.append('sdaa')
++    if cuda_available():
++        backends.append('cuda')
++    backends.append('cpu')
++    return backends
++
++
++def auto_device():
++    """Best accelerator in this process: ``sdaa`` > ``cuda`` > ``cpu``."""
++    if sdaa_available():
++        return 'sdaa'
++    if cuda_available():
++        return 'cuda'
++    return 'cpu'
++
++
++def _split_device(device):
++    """Return ``(type, index_or_None)`` for a str/torch.device/None input."""
++    if device is None:
++        device = auto_device()
++    if isinstance(device, torch.device):
++        return device.type, device.index
++
++    text = str(device).strip()
++    if ':' in text:
++        dev_type, _, dev_index = text.partition(':')
++        return dev_type, int(dev_index) if dev_index != '' else None
++    return text, None
++
++
++def resolve_device(device=None):
++    """Return a concrete device string, e.g. ``'sdaa:0'`` / ``'cuda:0'`` / ``'cpu'``.
++
++    ``None`` (or ``'auto'``) selects the best available backend.  SDAA indices
++    are normalised to 0 when omitted so downstream parsers always see ``:<n>``.
++    """
++    dev_type, dev_index = _split_device(device)
++
++    if dev_type == 'sdaa':
++        if not _ensure_torch_sdaa():
++            raise RuntimeError(
++                "SDAA device requested but 'torch_sdaa' is not importable")
++        if not torch.sdaa.is_available():
++            raise RuntimeError('SDAA device requested but no SDAA is available')
++        return 'sdaa:{}'.format(0 if dev_index is None else dev_index)
++
++    if dev_type == 'cuda':
++        if not cuda_available():
++            raise RuntimeError('CUDA device requested but CUDA is not available')
++        return 'cuda:{}'.format(0 if dev_index is None else dev_index)
++
++    if dev_type == 'cpu':
++        return 'cpu'
++
++    raise ValueError("Unknown device type: {!r}".format(device))
++
++
++def device_index(device):
++    """Return the integer index of a device string (0 for plain ``cpu``)."""
++    _, index = _split_device(device)
++    return 0 if index is None else index
++
++
++def build_device(device=None):
++    """Resolve ``device`` and select it for the current process.
++
++    Returns a :class:`torch.device`.  For ``cuda``/``sdaa`` this also calls the
++    matching ``set_device`` so later allocations default to the right card.
++    """
++    resolved = resolve_device(device)
++    dev_type, dev_index = _split_device(resolved)
++
++    if dev_type == 'sdaa':
++        torch.sdaa.set_device(dev_index)
++    elif dev_type == 'cuda':
++        torch.cuda.set_device(dev_index)
++
++    return torch.device(resolved)
++
++
++def synchronize(device=None):
++    """Block until all queued kernels on ``device`` have finished.
++
++    No-op for ``cpu`` (and for backends that are not actually available), so
++    callers can use it unconditionally around timing code.
++    """
++    dev_type, _ = _split_device(device)
++    if dev_type == 'sdaa' and sdaa_available():
++        torch.sdaa.synchronize()
++    elif dev_type == 'cuda' and cuda_available():
++        torch.cuda.synchronize()
++
++
++def warmup_device(device=None, size=8):
++    """Force lazy accelerator initialisation so it is not counted in timings.
++
++    The first kernel launched on SDAA/CUDA pays a one-off cost (device context
++    creation, LAPACK/kernel module loading). This runs a tiny op and
++    synchronises, so later timings measure steady-state work only. It is best
++    effort and never raises. Returns the resolved :class:`torch.device`.
++    """
++    dev = build_device(device)
++    try:
++        x = torch.ones(size, size, device=dev)
++        y = x @ x
++        synchronize(dev)
++        del x, y
++    except Exception:
++        pass
++    return dev
++
++
++class DeviceTimer:
++    """Context manager measuring wall time with device synchronisation.
++
++    The accelerator is synchronised both before the clock starts and after it
++    stops, so asynchronously queued kernels are fully accounted for. Combine
++    with :func:`warmup_device` to exclude one-off backend start-up cost.
++    """
++
++    def __init__(self, device=None, name=''):
++        self.device = device
++        self.name = name
++        self.elapsed = None
++        self._start = None
++
++    def __enter__(self):
++        synchronize(self.device)
++        self._start = time.perf_counter()
++        return self
++
++    def __exit__(self, exc_type, exc, tb):
++        synchronize(self.device)
++        self.elapsed = time.perf_counter() - self._start
++        return False
++
++
++def seed_everything(seed):
++    """Seed python/numpy and every available torch backend.
++
++    Seeding is best-effort per backend so this is safe on CPU-only, CUDA-only
++    and SDAA machines alike.
++    """
++    torch.manual_seed(seed)
++    random.seed(seed)
++    np.random.seed(seed)
++
++    if cuda_available():
++        torch.cuda.manual_seed_all(seed)
++    if sdaa_available():
++        torch.sdaa.manual_seed_all(seed)
++
++    if hasattr(torch.backends, 'cudnn'):
++        torch.backends.cudnn.deterministic = True
++        torch.backends.cudnn.benchmark = False
+diff --git a/moses/download_lfs.sh b/moses/download_lfs.sh
+new file mode 100644
+index 0000000..c930d1e
+--- /dev/null
++++ b/moses/download_lfs.sh
+@@ -0,0 +1,12 @@
++#!/bin/bash
++cd /data01/tuyilist/cyz/moses
++base=https://media.githubusercontent.com/media/molecularsets/moses/master
++for f in \
++  moses/dataset/data/train.csv.gz \
++  moses/dataset/data/test.csv.gz \
++  moses/dataset/data/test_scaffolds.csv.gz \
++  moses/dataset/data/test_stats.npz \
++  moses/dataset/data/test_scaffolds_stats.npz ; do
++  echo "downloading $f"
++  curl -L "$base/$f" -o "$f"
++done
+diff --git a/moses/logs/aae,_s1.log b/moses/logs/aae,_s1.log
+new file mode 100644
+index 0000000..ecabef7
+--- /dev/null
++++ b/moses/logs/aae,_s1.log
+@@ -0,0 +1 @@
++python: can't open file '/data01/tuyilist/cyz/moses/moses/scripts/run.py': [Errno 2] No such file or directory
+diff --git a/moses/logs/char_rnn,_s1.log b/moses/logs/char_rnn,_s1.log
+new file mode 100644
+index 0000000..ecabef7
+--- /dev/null
++++ b/moses/logs/char_rnn,_s1.log
+@@ -0,0 +1 @@
++python: can't open file '/data01/tuyilist/cyz/moses/moses/scripts/run.py': [Errno 2] No such file or directory
+diff --git a/moses/logs/organ_s1.log b/moses/logs/organ_s1.log
+new file mode 100644
+index 0000000..ecabef7
+--- /dev/null
++++ b/moses/logs/organ_s1.log
+@@ -0,0 +1 @@
++python: can't open file '/data01/tuyilist/cyz/moses/moses/scripts/run.py': [Errno 2] No such file or directory
+diff --git a/moses/logs/vae,_s1.log b/moses/logs/vae,_s1.log
+new file mode 100644
+index 0000000..ecabef7
+--- /dev/null
++++ b/moses/logs/vae,_s1.log
+@@ -0,0 +1 @@
++python: can't open file '/data01/tuyilist/cyz/moses/moses/scripts/run.py': [Errno 2] No such file or directory
+diff --git a/moses/metrics/SA_Score/sascorer.py b/moses/metrics/SA_Score/sascorer.py
+index 723ccf1..e4803e2 100644
+--- a/moses/metrics/SA_Score/sascorer.py
++++ b/moses/metrics/SA_Score/sascorer.py
+@@ -24,7 +24,13 @@ import pickle
+ 
+ from rdkit import Chem
+ from rdkit.Chem import rdMolDescriptors
+-from rdkit.six import iteritems
++# from rdkit.six import iteritems
++# 本地环境的rdkit版本较新，而改代码需要的rdkit版本是2019年的
++try:
++    from rdkit.six import iteritems
++except ImportError:
++    def iteritems(d):
++        return d.items()
+ 
+ _fscores = None
+ 
+diff --git a/moses/metrics/metrics.py b/moses/metrics/metrics.py
+index ebb82d7..a238b3d 100644
+--- a/moses/metrics/metrics.py
++++ b/moses/metrics/metrics.py
+@@ -19,6 +19,10 @@ def get_all_metrics(gen, k=None, n_jobs=1,
+                     test=None, test_scaffolds=None,
+                     ptest=None, ptest_scaffolds=None,
+                     train=None):
++
++    print("-----")
++    print(device)
++    print("-----")
+     """
+     Computes all available metrics between test (scaffold test)
+     and generated sets of SMILES.
+@@ -305,8 +309,10 @@ def cos_similarity(ref_counts, gen_counts):
+     if len(ref_counts) == 0 or len(gen_counts) == 0:
+         return np.nan
+     keys = np.unique(list(ref_counts.keys()) + list(gen_counts.keys()))
+-    ref_vec = np.array([ref_counts.get(k, 0) for k in keys])
+-    gen_vec = np.array([gen_counts.get(k, 0) for k in keys])
++    # ref_vec = np.array([ref_counts.get(k, 0) for k in keys])
++    # gen_vec = np.array([gen_counts.get(k, 0) for k in keys])
++    ref_vec = np.array([ref_counts.get(k, 0) for k in keys], dtype=float)
++    gen_vec = np.array([gen_counts.get(k, 0) for k in keys], dtype=float)
+     return 1 - cos_distance(ref_vec, gen_vec)
+ 
+ 
+diff --git a/moses/metrics/utils.py b/moses/metrics/utils.py
+index a821b94..fd6de3b 100644
+--- a/moses/metrics/utils.py
++++ b/moses/metrics/utils.py
+@@ -20,8 +20,12 @@ _base_dir = os.path.split(__file__)[0]
+ _mcf = pd.read_csv(os.path.join(_base_dir, 'mcf.csv'))
+ _pains = pd.read_csv(os.path.join(_base_dir, 'wehi_pains.csv'),
+                      names=['smarts', 'names'])
++# _filters = [Chem.MolFromSmarts(x) for x in
++#             _mcf.append(_pains, sort=True)['smarts'].values]
++
++# pandas 2.x 移除了DataFrame.append，我们用的是pandas 2.3.3
+ _filters = [Chem.MolFromSmarts(x) for x in
+-            _mcf.append(_pains, sort=True)['smarts'].values]
++            pd.concat([_mcf, _pains], sort=True)['smarts'].values]
+ 
+ 
+ def canonic_smiles(smiles_or_mol):
+diff --git a/moses/organ/model.py b/moses/organ/model.py
+index 36cf3fc..8479b05 100644
+--- a/moses/organ/model.py
++++ b/moses/organ/model.py
+@@ -20,7 +20,8 @@ class Generator(nn.Module):
+ 
+     def forward(self, x, lengths, states=None):
+         x = self.embedding_layer(x)
+-        x = pack_padded_sequence(x, lengths, batch_first=True)
++        # x = pack_padded_sequence(x, lengths, batch_first=True)
++        x = pack_padded_sequence(x, lengths.cpu(), batch_first=True)
+         x, states = self.lstm_layer(x, states)
+         x, _ = pad_packed_sequence(x, batch_first=True)
+         x = self.linear_layer(x)
+@@ -162,8 +163,12 @@ class ORGAN(nn.Module):
+             prevs = torch.empty(n_samples, 1,
+                                 dtype=torch.long,
+                                 device=self.device).fill_(self.vocabulary.bos)
+-            is_end = torch.zeros(n_samples,
+-                                 dtype=torch.uint8,
++            # is_end = torch.zeros(n_samples,
++            #                      dtype=torch.uint8,
++            #                      device=self.device)
++
++            s_end = torch.zeros(n_samples,
++                                 dtype=torch.bool,
+                                  device=self.device)
+             states = None
+ 
+diff --git a/moses/script_utils.py b/moses/script_utils.py
+index f657501..099d6d1 100644
+--- a/moses/script_utils.py
++++ b/moses/script_utils.py
+@@ -1,4 +1,5 @@
+ import argparse
++import json
+ import random
+ import re
+ import numpy as np
+@@ -6,29 +7,41 @@ import pandas as pd
+ import torch
+ 
+ 
+-def add_common_arg(parser):
+-    def torch_device(arg):
+-        if re.match('^(cuda(:[0-9]+)?|cpu)$', arg) is None:
++def torch_device(arg):
++    """argparse validator accepting cpu / cuda:<n> / sdaa:<n> / auto."""
++    if re.match('^(cuda(:[0-9]+)?|sdaa(:[0-9]+)?|cpu|auto)$', arg) is None:
++        raise argparse.ArgumentTypeError(
++            'Wrong device format: {}'.format(arg)
++        )
++
++    if arg in ('cpu', 'auto'):
++        return arg
++
++    from moses.device_utils import sdaa_available
++    splited_device = arg.split(':')
++    n = int(splited_device[1]) if len(splited_device) > 1 else 0
++
++    if splited_device[0] == 'sdaa':
++        if not sdaa_available():
++            raise argparse.ArgumentTypeError(
++                'Wrong device: {} is not available'.format(arg)
++            )
++    else:  # cuda
++        if (not torch.cuda.is_available()) or \
++                (n >= torch.cuda.device_count()):
+             raise argparse.ArgumentTypeError(
+-                'Wrong device format: {}'.format(arg)
++                'Wrong device: {} is not available'.format(arg)
+             )
+ 
+-        if arg != 'cpu':
+-            splited_device = arg.split(':')
++    return arg
+ 
+-            if (not torch.cuda.is_available()) or \
+-                    (len(splited_device) > 1 and
+-                     int(splited_device[1]) > torch.cuda.device_count()):
+-                raise argparse.ArgumentTypeError(
+-                    'Wrong device: {} is not available'.format(arg)
+-                )
+-
+-        return arg
+ 
++def add_common_arg(parser):
+     # Base
+     parser.add_argument('--device',
+-                        type=torch_device, default='cuda',
+-                        help='Device to run: "cpu" or "cuda:<device number>"')
++                        type=torch_device, default=None,
++                        help='Device to run: "cpu", "cuda:<n>" or "sdaa:<n>" '
++                             '(default: auto-detect sdaa > cuda > cpu)')
+     parser.add_argument('--seed',
+                         type=int, default=0,
+                         help='Seed')
+@@ -93,20 +106,41 @@ def add_sample_args(parser):
+     common_arg.add_argument("--max_len",
+                             type=int, default=100,
+                             help="Max of length of SMILES")
++    common_arg.add_argument("--time_path",
++                            type=str, default=None,
++                            help="Optional file to append JSON timing records")
+ 
+     return parser
+ 
+ 
++# def read_smiles_csv(path):
++#     return pd.read_csv(path,
++#                        usecols=['SMILES'],
++#                        squeeze=True).astype(str).tolist()
++
++
+ def read_smiles_csv(path):
+     return pd.read_csv(path,
+-                       usecols=['SMILES'],
+-                       squeeze=True).astype(str).tolist()
++                       usecols=['SMILES'])['SMILES'].astype(str).tolist()
++
++
++def record_timing(time_path, stage, seconds, **extra):
++    """Report one timing measurement.
++
++    Always prints a single line to stdout. When ``time_path`` is given, also
++    appends a JSON object (one per line) so several stages/models can be
++    aggregated later. Extra keyword arguments are stored alongside the value.
++    """
++    suffix = ''.join(' {}={}'.format(k, v) for k, v in extra.items())
++    print('[time] {}: {:.3f} s{}'.format(stage, seconds, suffix), flush=True)
++    if time_path:
++        record = {'stage': stage, 'seconds': seconds}
++        record.update(extra)
++        with open(time_path, 'a') as f:
++            f.write(json.dumps(record) + '\n')
+ 
+ 
+ def set_seed(seed):
+-    torch.manual_seed(seed)
+-    torch.cuda.manual_seed_all(seed)
+-    random.seed(seed)
+-    np.random.seed(seed)
+-    torch.backends.cudnn.deterministic = True
+-    torch.backends.cudnn.benchmark = False
++    # Backend agnostic: seeds python/numpy and whichever of cuda/sdaa exists.
++    from moses.device_utils import seed_everything
++    seed_everything(seed)
+diff --git a/moses/vae/model.py b/moses/vae/model.py
+index 92547c0..026cc7f 100644
+--- a/moses/vae/model.py
++++ b/moses/vae/model.py
+@@ -147,8 +147,9 @@ class VAE(nn.Module):
+ 
+         z_0 = z.unsqueeze(1).repeat(1, x_emb.size(1), 1)
+         x_input = torch.cat([x_emb, z_0], dim=-1)
+-        x_input = nn.utils.rnn.pack_padded_sequence(x_input, lengths,
+-                                                    batch_first=True)
++        x_input = nn.utils.rnn.pack_padded_sequence(x_input, lengths, batch_first=True)
++
++                                                    
+ 
+         h_0 = self.decoder_lat(z)
+         h_0 = h_0.unsqueeze(0).repeat(self.decoder_rnn.num_layers, 1, 1)
+@@ -201,7 +202,9 @@ class VAE(nn.Module):
+             x[:, 0] = self.bos
+             end_pads = torch.tensor([max_len], device=self.device).repeat(
+                 n_batch)
+-            eos_mask = torch.zeros(n_batch, dtype=torch.uint8,
++            # bool mask: uint8 boolean indexing (masked_fill_) is rejected by
++            # recent PyTorch on every backend, incl. SDAA.
++            eos_mask = torch.zeros(n_batch, dtype=torch.bool,
+                                    device=self.device)
+ 
+             # Generating cycle
+diff --git a/sc.sh b/sc.sh
+new file mode 100644
+index 0000000..ebee89d
+--- /dev/null
++++ b/sc.sh
+@@ -0,0 +1,167 @@
++#!/bin/bash
++
++set -e
++
++# ==============================
++# 配置
++# ==============================
++
++BASE_DIR="/data01/tuyilist/cyz"
++PROJECT_DIR="/data01/tuyilist/cyz/moses/moses"
++
++LOG_DIR="${BASE_DIR}/genoutput/logs"
++DONE_FILE="${BASE_DIR}/genoutput/all_completed.txt"
++
++mkdir -p "${LOG_DIR}"
++
++LOG_FILE="${LOG_DIR}/run_all_$(date '+%Y%m%d_%H%M%S').log"
++
++# ==============================
++# 开始记录日志
++# ==============================
++
++exec > >(tee -a "${LOG_FILE}") 2>&1
++
++echo "=========================================="
++echo "任务开始: $(date)"
++echo "日志文件: ${LOG_FILE}"
++echo "=========================================="
++
++cd "${PROJECT_DIR}"
++
++# 如果之前存在完成文件，先删除
++rm -f "${DONE_FILE}"
++
++
++# ==============================
++# 1. ORGAN sample
++# ==============================
++
++echo ""
++echo "=========================================="
++echo "[1/5] 开始执行 ORGAN sample"
++echo "时间: $(date)"
++echo "=========================================="
++
++python scripts/sample.py organ \
++       --model_load /data01/tuyilist/cyz/checkpoint/ORGAN/model.pt \
++       --vocab_load /data01/tuyilist/cyz/checkpoint/ORGAN/vocab.pt \
++       --config_load /data01/tuyilist/cyz/checkpoint/ORGAN/config.pt \
++       --n_samples 30000 \
++       --gen_save /data01/tuyilist/cyz/genoutput/organ/gen_tiem.csv \
++       --time_path /data01/tuyilist/cyz/genoutput/time/smaple_organ.json
++
++echo "[1/5] ORGAN sample 完成: $(date)"
++
++
++# ==============================
++# 2. VAE sample
++# ==============================
++
++echo ""
++echo "=========================================="
++echo "[2/5] 开始执行 VAE sample"
++echo "时间: $(date)"
++echo "=========================================="
++
++python scripts/sample.py vae \
++       --model_load /data01/tuyilist/cyz/checkpoint/VAE/model.pt \
++       --vocab_load /data01/tuyilist/cyz/checkpoint/VAE/vocab.pt \
++       --config_load /data01/tuyilist/cyz/checkpoint/VAE/config.pt \
++       --n_samples 30000 \
++       --gen_save /data01/tuyilist/cyz/genoutput/vae/gen_tiem.csv \
++       --time_path /data01/tuyilist/cyz/genoutput/time/smaple_vae.json
++
++echo "[2/5] VAE sample 完成: $(date)"
++
++
++# ==============================
++# 3. Char RNN eval
++# ==============================
++
++echo ""
++echo "=========================================="
++echo "[3/5] 开始执行 Char RNN eval"
++echo "时间: $(date)"
++echo "=========================================="
++
++python scripts/eval.py \
++       --test_path /data01/tuyilist/cyz/moses/moses/dataset/data/test.csv.gz \
++       --test_scaffolds_path /data01/tuyilist/cyz/moses/moses/dataset/data/test_scaffolds.csv.gz \
++       --train_path /data01/tuyilist/cyz/moses/moses/dataset/data/train.csv.gz \
++       --gen_path /data01/tuyilist/cyz/genoutput/char_rnn/gen_tiem.csv \
++       --device sdaa:0 \
++       --n_jobs 8 \
++       --time_path /data01/tuyilist/cyz/moses/time/evla_char_rnn.json
++
++echo "[3/5] Char RNN eval 完成: $(date)"
++
++
++# ==============================
++# 4. ORGAN eval
++# ==============================
++
++echo ""
++echo "=========================================="
++echo "[4/5] 开始执行 ORGAN eval"
++echo "时间: $(date)"
++echo "=========================================="
++
++python scripts/eval.py \
++       --test_path /data01/tuyilist/cyz/moses/moses/dataset/data/test.csv.gz \
++       --test_scaffolds_path /data01/tuyilist/cyz/moses/moses/dataset/data/test_scaffolds.csv.gz \
++       --train_path /data01/tuyilist/cyz/moses/moses/dataset/data/train.csv.gz \
++       --gen_path /data01/tuyilist/cyz/genoutput/organ/gen_tiem.csv \
++       --device sdaa:0 \
++       --n_jobs 8 \
++       --time_path /data01/tuyilist/cyz/moses/time/evla_orgn.json
++
++echo "[4/5] ORGAN eval 完成: $(date)"
++
++
++# ==============================
++# 5. VAE eval
++# ==============================
++
++echo ""
++echo "=========================================="
++echo "[5/5] 开始执行 VAE eval"
++echo "时间: $(date)"
++echo "=========================================="
++
++python scripts/eval.py \
++       --test_path /data01/tuyilist/cyz/moses/moses/dataset/data/test.csv.gz \
++       --test_scaffolds_path /data01/tuyilist/cyz/moses/moses/dataset/data/test_scaffolds.csv.gz \
++       --train_path /data01/tuyilist/cyz/moses/moses/dataset/data/train.csv.gz \
++       --gen_path /data01/tuyilist/cyz/genoutput/vae/gen_tiem.csv \
++       --device sdaa:0 \
++       --n_jobs 8 \
++       --time_path /data01/tuyilist/cyz/moses/time/evla_vae.json
++
++echo "[5/5] VAE eval 完成: $(date)"
++
++
++# ==============================
++# 全部完成
++# ==============================
++
++echo ""
++echo "=========================================="
++echo "全部任务执行完成！"
++echo "完成时间: $(date)"
++echo "=========================================="
++
++cat > "${DONE_FILE}" << EOF
++ALL_TASKS_COMPLETED
++
++completed_time=$(date '+%Y-%m-%d %H:%M:%S')
++
++status=success
++
++tasks=5
++EOF
++
++echo "完成标记已写入:"
++echo "${DONE_FILE}"
++echo ""
++echo "任务全部结束: $(date)"
+diff --git a/scripts/checkpoints/aae_config.pt b/scripts/checkpoints/aae_config.pt
+new file mode 100644
+index 0000000000000000000000000000000000000000..7063ec9c70242aef823219e70dc39323b370b062
+GIT binary patch
+literal 2047
+zcmbVN%}*0S6rUC-SX7h`6%-Y}f>GN-YXPGn>7gE0NJC<>Au*fj?yw!%uh|`nn3!OU
+ziAVndy?O92@bA!rCl4l`JQ;5uJow(OrPD$+`jTmP-n{pFzn%Hb+nUzbPsq>^*=J*9
+zgiy*1)Au&Gowul@xnR?&R))!X+ji3?4efx25zDSpmqh_JSyqs%Petm9NYCm=0hqaU
+zW?9^`jfg*HqE9=okD=Q$eT#)ggIgB!lC}O7lGaC+MQ_VB9J<58NDOExeL`8PbBl+}
+zl-&2IBQh`a5oOT|{lMRnVo)P-F^lalHq<KCT2zW1($X<rYpI2o1-xOX<50;wnUEgV
+zcJ*=aSv)dB?sAVxKWwo+{6HL;UD-{qkQ9p%gOJIPa?fCaZ#E)v6c7(Xc87CBd!!G7
+z(=+N+nhkLbsiv`RD30G<uGLpQe1H2>KLnmgvLN9xs*URd;IXOeQZaUS`7=zw^bGuX
+z#zVgziE-FO%<_zFKitG^od6FWM<;tkjl>C9LvGuQ+YM>JX3!mR5(p!r#hTn?;#53|
+zEJ|<9iAf#gL?Xs4F$G~+m?ZDz_|y`oS9MfclR8E`KeHM~xF7?^h-j0EX?+R;a(T1C
+z%+0{(o{aLS!Z;)sNO3k+6vi4GAro65q8)J#UL1iP-!?Y5!^C-g@<12}$jL`i%*1Dy
+zNINNfK|g(9MiPUSFUDM(zDesz%B3D$;}FcatYpORdu4U2o~vntL&sm<yHo5V1V^ps
+z6`Udi>J`jw_@PUs(S%b2%~vZavOb4s@4kI{mIC%TdZSH~QU_WDBBeGnsKaf~1u<7E
+z1@&sTFZmyy$|WSQye+<>IC1nQFivi(1nN7I`5`obYGv`C>$WI4TuO%_hv#>`Ork1r
+z^yV;1ZmAshwzB-642oH-{r<Im|L^ZVL-K0v9JbVa#6k`y@R(v7Gq_c)T>BR)h54nz
+zVyV1XURYQt&o9jv=L)4lp-?U@-7J=h;Fw>ySt!pf#;4S1db6-QIBHr73Ga1&Rgl;W
+zI_-e(KsSJ@LA=6kdj=X;0J>D%jiX9wx(xzP@4ImJ>9-q7RRp%@wyi;vQYh^yu^T}>
+zSNtfo?PDjxZyj~#FDpAf(@ut`HR#g{gM+nD(=wUszthh4-Pi*_iKDgt-{8du`+?0L
+X4D#^XL0-kbt-df2hi4!Q<CEB5*(~;y
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/checkpoints/aae_vocab.pt b/scripts/checkpoints/aae_vocab.pt
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ee44d0f5aa7ad94526cf81799d1b16dd5cc3796
+GIT binary patch
+literal 1785
+zcmbW2OHUI~6vwCUH}nOiFDMU9F;Lo}v@{APC22G#(FW8IjcKOs$emC+oX!-Z35mw|
+z8Qkf{h2OxhVBE2B<<6BWw=BK)7Gb8?7(B_%{7!q%qxb&jv<^1AAh_MaB?}8dL6YRg
+zk=l})D{V=aa)<k!TGcN+HrOj`>p<0HE!WqTj^^DWQtuH9@S?Ez8ZF0Y&F)%hZcRg*
+zY3I(N+)|{@19e~SYF@PO+UTy9sG#E*o!MOr_2$t90;epx!NO?~Jz(Xuj9##DDxeSS
+zoJ914gVQPoz{#nIW8mVnhU4JoRKg&5IBj4Eyqu~S1|O#_jDVk04Wkg?bO$G3jMF`w
+zgmF&yF$O_SJ2(X)PERlnVNOpm0TE6uOhS}X2U9S?sf%ft<fP&>#5nbE2BtV^n1T4N
+zgPy^yrmAh?EF=b=%)B{B4!lFDy@~UX8hHKg{w6L!y3dbN5nFie7_VnRATF>FH&}@W
+zY{Uz8;sXcqgOdcnMaIBQ#=%2^;3XmOkudm41Og-qV`Kux$s`0x3_@fI!Xyq6l7J{l
+z!URddBuPVzOv4nJfjG%Pg3Lma%t4CGLz*n~`^{V(T<$Ml<9Da21lX#NR9jp~8q}71
+zruGgby>TS>G)3*!sxg!34Eigu5}$v4f5QaB*60!`Va-@V)774|CpV;yve!M3yLzo!
+z7*)kka0p99*1+xO_>-xet<eocgbhOj%@?|?_S$l<R;^sU?w>X~imrEL*2CM4A8{wG
+z&(`Q3Lc&c$59jAw{@)H(y{z`h`@M(%{{0ytZ>XJPBV|RCdvppYFD0Gcb3<v@s!LaD
+zB`;R;>&4P~sa!6X#EQ6D$QSeZd}+NbiejFAx>hL^%0+%lpKhFf%+k|gs}2^{@cHC3
+zsx-{LFxllfI2>=3VB8ejrFAaihm<{>#weteDb0yF%_a2?XEMqmV#>5lC+$T;=Q12l
+zV7$|iDZw{Wf-?;bhZ_$&V+!A<e>fNQ|1N_%IGsypQPZ~N^LQq1W`CX^*eg%%l;&hc
+W<6P|d?rg(gA~?9`q)}}DVDE4K4{)IX
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/debug.py b/scripts/debug.py
+new file mode 100644
+index 0000000..e7016b7
+--- /dev/null
++++ b/scripts/debug.py
+@@ -0,0 +1,134 @@
++#!/usr/bin/env python
++"""Zero-intrusion FCD debugger: does NOT modify fcd_torch/moses."""
++import argparse
++import numpy as np
++import pandas as pd
++
++
++def read_gen(path):
++    # 读取生成的 SMILES（等价于 moses.script_utils.read_smiles_csv）
++    smiles = pd.read_csv(path, usecols=['SMILES'])['SMILES'].astype(str).tolist()
++    print(f"[DBG][read] {path}: rows={len(smiles)} first={smiles[0][:60]!r}")
++    return smiles
++
++
++def canon_valid(smiles):
++    # 复现 moses remove_invalid：过滤非法 SMILES 并规范化，统计有效/唯一数
++    from rdkit import Chem, RDLogger
++    RDLogger.DisableLog('rdApp.*')
++    valid = []
++    invalid = 0
++    for s in smiles:
++        m = Chem.MolFromSmiles(s)
++        if m is None:
++            invalid += 1
++        else:
++            valid.append(Chem.MolToSmiles(m))
++    uniq = sorted(set(valid))
++    print(f"[DBG][valid] total={len(smiles)} invalid={invalid} "
++          f"valid={len(valid)} valid_unique={len(uniq)}")
++    return uniq
++
++
++def unknown_rate(smiles):
++    # 复现 fcd_torch.utils.get_one_hot 的分词，统计不在词表里的字符比例
++    #（词表 utils.py:19-24 不含 '*'，用于验证未知 token 是否导致特征退化）
++    import fcd_torch.utils as U
++    vocab = set(getattr(U, '__vocab'))
++    two = getattr(U, '__two_letters')
++    tot = unk = 0
++    for s in smiles:
++        x = s + '.'
++        src = 0
++        while x[src] != '.':
++            if src + 1 < len(x) and x[src + 1] in two:
++                sym, src = x[src:src + 2], src + 2
++            else:
++                sym, src = x[src], src + 1
++            tot += 1
++            if sym not in vocab:
++                unk += 1
++    print(f"[DBG][token] total_chars={tot} unknown={unk} "
++          f"unknown_rate={unk / max(tot, 1):.3f}  (vocab has no '*')")
++
++
++def describe(tag, S):
++    # 核心：打印协方差的秩/条件数/特征值（判断是否秩亏）
++    ev = np.linalg.eigvalsh(S)
++    print(f"[DBG][cov] {tag}: shape={S.shape} rank={np.linalg.matrix_rank(S)} "
++          f"cond={np.linalg.cond(S):.3e} min_eig={ev.min():.3e} "
++          f"max_eig={ev.max():.3e} neg={int((ev < 0).sum())}")
++
++
++def dbg_frechet(mu1, sigma1, mu2, sigma2, tag1="sigma_test(ref)",
++                tag2="sigma_gen", eps=1e-6):
++    # 复现 fcd_torch.utils.calculate_frechet_distance (utils.py:142-173)，并打印中间量
++    from scipy import linalg
++    mu1, mu2 = np.atleast_1d(mu1), np.atleast_1d(mu2)
++    sigma1, sigma2 = np.atleast_2d(sigma1), np.atleast_2d(sigma2)
++    diff = mu1 - mu2
++    describe(tag1, sigma1)
++    describe(tag2, sigma2)
++    P = sigma1.dot(sigma2)
++    pe = np.linalg.eigvals(P)
++    print(f"[DBG][prod] eig(sigma1@sigma2): min_real={pe.real.min():.3e} "
++          f"neg={int((pe.real < 0).sum())}")
++    covmean, _ = linalg.sqrtm(P, disp=False)
++    imag = float(np.max(np.abs(covmean.imag))) if np.iscomplexobj(covmean) else 0.0
++    print(f"[DBG][sqrtm] imag_max={imag:.6e}  (library raises if diag imag > 1e-3)")
++    print(f"[DBG][fcd] ||mu1-mu2||^2={float(diff.dot(diff)):.4e}")
++    print("[DBG][fcd] -> " + ("WOULD RAISE 'Imaginary component'"
++          if (np.iscomplexobj(covmean) and not np.allclose(
++              np.diagonal(covmean).imag, 0, atol=1e-3)) else "sqrtm OK, no raise"))
++
++
++def load_ref(ptest_path):
++    # 加载参照统计量：显式 .npz 或 moses 内置默认 test 统计量
++    if ptest_path:
++        return np.load(ptest_path, allow_pickle=True)['stats'].item()['FCD']
++    from moses.dataset import get_statistics
++    print("[DBG][ref] using built-in default test statistics")
++    return get_statistics('test')['FCD']
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument('--gen_path', required=True)
++    ap.add_argument('--ptest_path', default=None)
++    ap.add_argument('--device', default='cpu')
++    ap.add_argument('--batch_size', type=int, default=512)
++    ap.add_argument('--n_jobs', type=int, default=0)   # 0/1 避免多进程吞日志
++    args = ap.parse_args()
++
++    gen = read_gen(args.gen_path)
++    valid_unique = canon_valid(gen)
++    if len(valid_unique) < 2:
++        print("[DBG] too few valid molecules, stop")
++        return
++    unknown_rate(valid_unique)
++
++    from fcd_torch import FCD
++    fcd = FCD(device=args.device, n_jobs=args.n_jobs, batch_size=args.batch_size)
++    feat = fcd.get_predictions(valid_unique)   # (N, 512) ChemNet 特征
++    print(f"[DBG][pred] feat shape={feat.shape} nan={int(np.isnan(feat).sum())} "
++          f"std={feat.std():.4e} "
++          f"uniq_rows={np.unique(feat.round(6), axis=0).shape[0]}")
++    mu_gen, sigma_gen = feat.mean(0), np.cov(feat.T)
++
++    ref = load_ref(args.ptest_path)
++    mu_ref, sigma_ref = np.asarray(ref['mu']), np.asarray(ref['sigma'])
++    print(f"[DBG][ref] mu={mu_ref.shape} sigma={sigma_ref.shape}")
++
++    # 与库调用顺序一致：calculate_frechet_distance(ref, gen) 见 fcd.py:91-93
++    dbg_frechet(mu_ref, sigma_ref, mu_gen, sigma_gen)
++
++    from fcd_torch.utils import calculate_frechet_distance
++    try:
++        d = calculate_frechet_distance(mu_ref, sigma_ref, mu_gen, sigma_gen)
++        print(f"[DBG][real] FCD={d}")
++    except ValueError as e:
++        print(f"[DBG][real] raised: {e}")
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/scripts/eval.py b/scripts/eval.py
+index d5abff7..ea70d78 100644
+--- a/scripts/eval.py
++++ b/scripts/eval.py
+@@ -3,13 +3,16 @@ import numpy as np
+ import rdkit
+ 
+ from moses.metrics.metrics import get_all_metrics
+-from moses.script_utils import read_smiles_csv
++from moses.script_utils import read_smiles_csv, record_timing
++from moses.device_utils import resolve_device, warmup_device, DeviceTimer
+ 
+ lg = rdkit.RDLogger.logger()
+ lg.setLevel(rdkit.RDLogger.CRITICAL)
+ 
+ 
+ def main(config, print_metrics=True):
++    # Normalise cpu / cuda:<n> / sdaa:<n> for the metric backend (ChemNet/FCD).
++    config.device = resolve_device(config.device)
+     test = None
+     test_scaffolds = None
+     ptest = None
+@@ -30,11 +33,20 @@ def main(config, print_metrics=True):
+             config.ptest_scaffolds_path,
+             allow_pickle=True)['stats'].item()
+     gen = read_smiles_csv(config.gen_path)
+-    metrics = get_all_metrics(gen=gen, k=config.ks, n_jobs=config.n_jobs,
+-                              device=config.device,
+-                              test_scaffolds=test_scaffolds,
+-                              ptest=ptest, ptest_scaffolds=ptest_scaffolds,
+-                              test=test, train=train)
++
++    # Exclude one-off SDAA/CUDA start-up (context creation, module load) from
++    # the measured evaluation time.
++    warmup_device(config.device)
++
++    with DeviceTimer(config.device, 'eval') as timer:
++        metrics = get_all_metrics(gen=gen, k=config.ks, n_jobs=config.n_jobs,
++                                  device=config.device,
++                                  test_scaffolds=test_scaffolds,
++                                  ptest=ptest, ptest_scaffolds=ptest_scaffolds,
++                                  test=test, train=train)
++
++    record_timing(getattr(config, 'time_path', None), 'eval', timer.elapsed,
++                  n_gen=len(gen), device=config.device)
+ 
+     if print_metrics:
+         for name, value in metrics.items():
+@@ -73,8 +85,11 @@ def get_parser():
+                         type=int, default=1,
+                         help='Number of processes to run metrics')
+     parser.add_argument('--device',
+-                        type=str, default='cpu',
+-                        help='GPU device id (`cpu` or `cuda:n`)')
++                        type=str, default='sdaa',
++                        help='Metric device: `cpu`, `cuda:n` or `sdaa:n`')
++    parser.add_argument('--time_path',
++                        type=str, default=None,
++                        help='Optional file to append JSON timing records')
+ 
+     return parser
+ 
+diff --git a/scripts/logs/aae,_s1.log b/scripts/logs/aae,_s1.log
+new file mode 100644
+index 0000000..aad6f0e
+--- /dev/null
++++ b/scripts/logs/aae,_s1.log
+@@ -0,0 +1 @@
++python: can't open file '/data01/tuyilist/cyz/moses/scripts/scripts/run.py': [Errno 2] No such file or directory
+diff --git a/scripts/logs/char_rnn,_s1.log b/scripts/logs/char_rnn,_s1.log
+new file mode 100644
+index 0000000..aad6f0e
+--- /dev/null
++++ b/scripts/logs/char_rnn,_s1.log
+@@ -0,0 +1 @@
++python: can't open file '/data01/tuyilist/cyz/moses/scripts/scripts/run.py': [Errno 2] No such file or directory
+diff --git a/scripts/logs/organ_s1.log b/scripts/logs/organ_s1.log
+new file mode 100644
+index 0000000..aad6f0e
+--- /dev/null
++++ b/scripts/logs/organ_s1.log
+@@ -0,0 +1 @@
++python: can't open file '/data01/tuyilist/cyz/moses/scripts/scripts/run.py': [Errno 2] No such file or directory
+diff --git a/scripts/logs/vae,_s1.log b/scripts/logs/vae,_s1.log
+new file mode 100644
+index 0000000..aad6f0e
+--- /dev/null
++++ b/scripts/logs/vae,_s1.log
+@@ -0,0 +1 @@
++python: can't open file '/data01/tuyilist/cyz/moses/scripts/scripts/run.py': [Errno 2] No such file or directory
+diff --git a/scripts/run.py b/scripts/run.py
+index 8e4d602..1475f9e 100644
+--- a/scripts/run.py
++++ b/scripts/run.py
+@@ -5,6 +5,7 @@ import importlib.util
+ import pandas as pd
+ 
+ from moses.models_storage import ModelsStorage
++from moses.device_utils import resolve_device
+ 
+ 
+ def load_module(name, path):
+@@ -82,10 +83,14 @@ def get_parser():
+                         help='Number of samples to sample')
+     parser.add_argument('--n_jobs', type=int, default=1,
+                         help='Number of threads')
+-    parser.add_argument('--device', type=str, default='cpu',
+-                        help='GPU device index in form `cuda:N` (or `cpu`)')
++    parser.add_argument('--device', type=str, default=None,
++                        help='Device: `cpu`, `cuda:N` or `sdaa:N` '
++                             '(default: auto-detect sdaa > cuda > cpu)')
+     parser.add_argument('--metrics', type=str, default='metrics.csv',
+                         help='Path to output file with metrics')
++    parser.add_argument('--time_path', type=str, default=None,
++                        help='Optional file to append JSON timing records '
++                             'for both sampling and evaluation')
+     parser.add_argument('--train_size', type=int, default=None,
+                         help='Size of training dataset')
+     parser.add_argument('--test_size', type=int, default=None,
+@@ -153,6 +158,7 @@ def sample_from_model(config, model):
+          '--gen_save', get_generation_path(config, model),
+          '--n_samples', str(config.n_samples)]
+     )[0]
++    sampler_config.time_path = config.time_path
+     sampler_script.main(model, sampler_config)
+ 
+ 
+@@ -177,14 +183,18 @@ def eval_metrics(config, model, test_path, test_scaffolds_path,
+         args.extend(['--train_path', train_path])
+ 
+     eval_config = eval_parser.parse_args(args)
++    eval_config.time_path = config.time_path
+     metrics = eval_script.main(eval_config, print_metrics=False)
+ 
+     return metrics
+ 
+ 
+ def main(config):
++    # Resolve `auto`/None once so every sub-script receives a concrete device.
++    config.device = resolve_device(config.device)
++
+     if not os.path.exists(config.checkpoint_dir):
+-        os.mkdir(config.checkpoint_dir)
++        os.makedirs(config.checkpoint_dir)
+ 
+     train_path = config.train_path
+     test_path = config.test_path
+diff --git a/scripts/sample.py b/scripts/sample.py
+index ad2755a..923d4a9 100644
+--- a/scripts/sample.py
++++ b/scripts/sample.py
+@@ -5,7 +5,8 @@ import rdkit
+ import pandas as pd
+ from tqdm.auto import tqdm
+ from moses.models_storage import ModelsStorage
+-from moses.script_utils import add_sample_args, set_seed
++from moses.script_utils import add_sample_args, set_seed, record_timing
++from moses.device_utils import build_device, warmup_device, DeviceTimer
+ 
+ lg = rdkit.RDLogger.logger()
+ lg.setLevel(rdkit.RDLogger.CRITICAL)
+@@ -23,33 +24,42 @@ def get_parser():
+ 
+ 
+ def main(model, config):
++    model_name = model
+     set_seed(config.seed)
+-    device = torch.device(config.device)
++    # Builds a torch.device for cpu / cuda:<n> / sdaa:<n> and selects the card.
++    device = build_device(config.device)
++    config.device = str(device)
+ 
+-    # For CUDNN to work properly:
+-    if device.type.startswith('cuda'):
+-        torch.cuda.set_device(device.index or 0)
+-
+-    model_config = torch.load(config.config_load)
+-    model_vocab = torch.load(config.vocab_load)
+-    model_state = torch.load(config.model_load)
++    # weights_only=False: config/vocab are pickled python objects (trusted).
++    model_config = torch.load(config.config_load, weights_only=False)
++    model_vocab = torch.load(config.vocab_load, weights_only=False)
++    model_state = torch.load(config.model_load, weights_only=False)
+ 
+     model = MODELS.get_model_class(model)(model_vocab, model_config)
+     model.load_state_dict(model_state)
+     model = model.to(device)
+     model.eval()
+ 
+-    samples = []
+-    n = config.n_samples
+-    with tqdm(total=config.n_samples, desc='Generating samples') as T:
+-        while n > 0:
+-            current_samples = model.sample(
+-                min(n, config.n_batch), config.max_len
+-            )
+-            samples.extend(current_samples)
+-
+-            n -= len(current_samples)
+-            T.update(len(current_samples))
++    # Pay the one-off SDAA/CUDA start-up cost before the clock starts so the
++    # reported sampling time only covers steady-state generation.
++    warmup_device(device)
++
++    with DeviceTimer(device, 'sample') as timer:
++        samples = []
++        n = config.n_samples
++        with tqdm(total=config.n_samples, desc='Generating samples') as T:
++            while n > 0:
++                current_samples = model.sample(
++                    min(n, config.n_batch), config.max_len
++                )
++                samples.extend(current_samples)
++
++                n -= len(current_samples)
++                T.update(len(current_samples))
++
++    record_timing(getattr(config, 'time_path', None), 'sample', timer.elapsed,
++                  model=model_name, n_samples=config.n_samples,
++                  device=config.device)
+ 
+     samples = pd.DataFrame(samples, columns=['SMILES'])
+     samples.to_csv(config.gen_save, index=False)
+diff --git a/scripts/train.py b/scripts/train.py
+index 9da81ac..d6270f1 100644
+--- a/scripts/train.py
++++ b/scripts/train.py
+@@ -3,11 +3,10 @@ import os
+ import sys
+ import torch
+ import rdkit
+-
+ from moses.script_utils import add_train_args, read_smiles_csv, set_seed
+ from moses.models_storage import ModelsStorage
+ from moses.dataset import get_dataset
+-
++from moses.device_utils import build_device
+ lg = rdkit.RDLogger.logger()
+ lg.setLevel(rdkit.RDLogger.CRITICAL)
+ 
+@@ -30,14 +29,13 @@ def get_parser():
+ 
+ def main(model, config):
+     set_seed(config.seed)
+-    device = torch.device(config.device)
++    # Builds a torch.device for cpu / cuda:<n> / sdaa:<n> and selects the card.
++    device = build_device(config.device)
++    config.device = str(device)
+ 
+     if config.config_save is not None:
+         torch.save(config, config.config_save)
+ 
+-    # For CUDNN to work properly
+-    if device.type.startswith('cuda'):
+-        torch.cuda.set_device(device.index or 0)
+     if config.train_load is None:
+         train_data = get_dataset('train')
+     else:
+@@ -51,7 +49,7 @@ def main(model, config):
+     if config.vocab_load is not None:
+         assert os.path.exists(config.vocab_load), \
+             'vocab_load path does not exist!'
+-        vocab = torch.load(config.vocab_load)
++        vocab = torch.load(config.vocab_load, weights_only=False)
+     else:
+         vocab = trainer.get_vocabulary(train_data)
+ 
+diff --git a/scripts/verify_aae_inference.py b/scripts/verify_aae_inference.py
+new file mode 100644
+index 0000000..b8379c9
+--- /dev/null
++++ b/scripts/verify_aae_inference.py
+@@ -0,0 +1,224 @@
++#!/usr/bin/env python
++"""AAE inference verification and cross-device benchmark.
++
++Runs the MOSES AAE decoder on one or more backends (``cpu``, ``cuda:<n>``,
++``sdaa:<n>``) and reports:
++
++* numerical parity of the encoder / decoder against CPU (same weights, eval
++  mode, deterministic ops), and
++* end-to-end sampling cost: wall time, throughput, validity and uniqueness.
++
++Nothing here is SDAA specific: the *same* script runs on a CUDA-only box.
++"""
++
++import argparse
++import json
++import os
++import sys
++import time
++
++import numpy as np
++import torch
++from torch.nn.utils.rnn import pad_sequence
++
++import rdkit
++from rdkit import Chem
++
++from moses.aae import AAE
++from moses.device_utils import build_device, resolve_device
++from moses.script_utils import set_seed
++
++lg = rdkit.RDLogger.logger()
++lg.setLevel(rdkit.RDLogger.CRITICAL)
++
++
++def load_case(model_load, config_load, vocab_load):
++    config = torch.load(config_load, map_location='cpu', weights_only=False)
++    vocab = torch.load(vocab_load, map_location='cpu', weights_only=False)
++    state = torch.load(model_load, map_location='cpu', weights_only=False)
++    return config, vocab, state
++
++
++def make_model(vocab, config, state, device):
++    model = AAE(vocab, config)
++    model.load_state_dict(state)
++    model = model.to(device)
++    model.eval()
++    return model
++
++
++def _batch_encoder(model, strings, device):
++    tensors = [model.string2tensor(s, device='cpu') for s in strings]
++    # pack_padded_sequence needs decreasing lengths.
++    order = sorted(range(len(tensors)), key=lambda i: tensors[i].numel(),
++                   reverse=True)
++    tensors = [tensors[i] for i in order]
++    lengths = torch.tensor([t.numel() - 2 for t in tensors], dtype=torch.long)
++    inputs = pad_sequence(tensors, batch_first=True,
++                          padding_value=model.vocabulary.pad).to(device)
++    with torch.no_grad():
++        return model.encoder_forward(inputs, lengths).cpu()
++
++
++def _batch_decoder_step(model, device, n_batch):
++    """One decoder step with fixed latent states and tokens (parity probe)."""
++    latent = torch.linspace(-1.0, 1.0, n_batch * model.latent_size,
++                            dtype=torch.float).view(n_batch, model.latent_size)
++    latent = latent.to(device)
++    prevs = torch.zeros(n_batch, 1, dtype=torch.long, device=device)
++    prevs.fill_(model.vocabulary.bos)
++    one_lens = torch.ones(n_batch, dtype=torch.long, device=device)
++    with torch.no_grad():
++        logits, _, _ = model.decoder(prevs, one_lens, latent,
++                                     is_latent_states=True)
++    return logits.cpu()
++
++
++def parity_check(ref_model, other_model, strings, device, n_batch=32):
++    ref_latent = _batch_encoder(ref_model, strings[:n_batch], 'cpu')
++    oth_latent = _batch_encoder(other_model, strings[:n_batch], device)
++
++    ref_logits = _batch_decoder_step(ref_model, 'cpu', n_batch)
++    oth_logits = _batch_decoder_step(other_model, device, n_batch)
++
++    enc_diff = (ref_latent - oth_latent).abs().max().item()
++    dec_diff = (ref_logits - oth_logits).abs().max().item()
++    return {
++        'encoder_max_abs_diff': enc_diff,
++        'decoder_max_abs_diff': dec_diff,
++        'encoder_allclose_1e-3': bool(
++            torch.allclose(ref_latent, oth_latent, atol=1e-3, rtol=1e-3)),
++        'decoder_allclose_1e-3': bool(
++            torch.allclose(ref_logits, oth_logits, atol=1e-3, rtol=1e-3)),
++    }
++
++
++def _valid_unique(samples):
++    valid, seen = 0, set()
++    for s in samples:
++        m = Chem.MolFromSmiles(s) if s else None
++        if m is not None:
++            valid += 1
++            seen.add(Chem.MolToSmiles(m))
++    n = len(samples)
++    return {
++        'n_samples': n,
++        'valid': valid,
++        'validity': valid / n if n else 0.0,
++        'unique_valid': len(seen),
++        'unique_valid_ratio': len(seen) / n if n else 0.0,
++    }
++
++
++def benchmark(model, device, n_samples, n_batch, max_len, seed,
++              save_csv=None):
++    set_seed(seed)
++    # warmup (excluded from timing)
++    model.sample(min(n_batch, 8), max_len)
++
++    samples = []
++    n = n_samples
++    t0 = time.perf_counter()
++    while n > 0:
++        cur = model.sample(min(n, n_batch), max_len)
++        samples.extend(cur)
++        n -= len(cur)
++    elapsed = time.perf_counter() - t0
++
++    stats = _valid_unique(samples)
++    stats.update({
++        'device': str(device),
++        'wall_time_s': round(elapsed, 3),
++        'throughput_smiles_per_s': round(len(samples) / elapsed, 2)
++        if elapsed > 0 else None,
++        'n_batch': n_batch,
++        'max_len': max_len,
++        'seed': seed,
++    })
++    if save_csv is not None:
++        import pandas as pd
++        pd.DataFrame(samples, columns=['SMILES']).to_csv(save_csv, index=False)
++        stats['gen_csv'] = save_csv
++    return stats
++
++
++def main():
++    ap = argparse.ArgumentParser(description=__doc__)
++    ap.add_argument('--model_load', required=True)
++    ap.add_argument('--config_load', required=True)
++    ap.add_argument('--vocab_load', required=True)
++    ap.add_argument('--devices', nargs='+', default=['cpu'],
++                    help='e.g. "cpu sdaa:0" or "cpu cuda:0"')
++    ap.add_argument('--n_samples', type=int, default=1024)
++    ap.add_argument('--n_batch', type=int, default=512)
++    ap.add_argument('--max_len', type=int, default=100)
++    ap.add_argument('--seed', type=int, default=42)
++    ap.add_argument('--outdir', default=None,
++                    help='Directory for generated csv + results json')
++    ap.add_argument('--skip_parity', action='store_true')
++    args = ap.parse_args()
++
++    devices = [resolve_device(d) for d in args.devices]
++    outdir = args.outdir or '.'
++    os.makedirs(outdir, exist_ok=True)
++
++    config, vocab, state = load_case(
++        args.model_load, args.config_load, args.vocab_load)
++
++    results = {'args': vars(args), 'devices': devices, 'benchmarks': {},
++               'parity': {}}
++
++    # CPU reference (always built once)
++    cpu_dev = torch.device('cpu')
++    cpu_model = make_model(vocab, config, state, cpu_dev)
++
++    strings = None
++    if not args.skip_parity:
++        from moses.dataset import get_dataset
++        strings = get_dataset('test')[:512]
++
++    for dev in devices:
++        print('=' * 70)
++        print('device:', dev)
++        device = build_device(dev)
++        model = make_model(vocab, config, state, device)
++
++        if not args.skip_parity:
++            if dev.startswith('cpu'):
++                results['parity'][dev] = {
++                    'encoder_max_abs_diff': 0.0,
++                    'decoder_max_abs_diff': 0.0,
++                    'encoder_allclose_1e-3': True,
++                    'decoder_allclose_1e-3': True,
++                    'note': 'reference',
++                }
++            else:
++                par = parity_check(cpu_model, model, strings, device)
++                results['parity'][dev] = par
++                print('parity:', par)
++
++        tag = dev.replace(':', '_')
++        csv_path = os.path.join(outdir, 'aae_gen_{}.csv'.format(tag))
++        bench = benchmark(model, device, args.n_samples, args.n_batch,
++                          args.max_len, args.seed, save_csv=csv_path)
++        results['benchmarks'][dev] = bench
++        print('benchmark:', json.dumps(bench, ensure_ascii=False))
++
++        del model
++        if device.type != 'cpu':
++            try:
++                getattr(torch, device.type if device.type != 'cuda'
++                        else 'cuda').empty_cache()
++            except Exception:
++                pass
++
++    json_path = os.path.join(outdir, 'aae_device_results.json')
++    with open(json_path, 'w') as f:
++        json.dump(results, f, indent=2, ensure_ascii=False)
++    print('=' * 70)
++    print('saved:', json_path)
++    return results
++
++
++if __name__ == '__main__':
++    main()
+\ No newline at end of file
+diff --git a/time/eval.json b/time/eval.json
+new file mode 100644
+index 0000000..e69de29
+diff --git a/time/evla.json b/time/evla.json
+new file mode 100644
+index 0000000..bb8678c
+--- /dev/null
++++ b/time/evla.json
+@@ -0,0 +1 @@
++{"stage": "eval", "seconds": 6708.902593437582, "n_gen": 30000, "device": "sdaa:0"}
+diff --git a/time/evla_char_rnn.json b/time/evla_char_rnn.json
+new file mode 100644
+index 0000000..3eb0dbf
+--- /dev/null
++++ b/time/evla_char_rnn.json
+@@ -0,0 +1 @@
++{"stage": "eval", "seconds": 5960.138227010146, "n_gen": 30000, "device": "sdaa:0"}
+diff --git a/time/evla_orgn.json b/time/evla_orgn.json
+new file mode 100644
+index 0000000..124fcce
+--- /dev/null
++++ b/time/evla_orgn.json
+@@ -0,0 +1 @@
++{"stage": "eval", "seconds": 8095.549381699413, "n_gen": 30000, "device": "sdaa:0"}
+diff --git a/time/evla_vae.json b/time/evla_vae.json
+new file mode 100644
+index 0000000..8923cf4
+--- /dev/null
++++ b/time/evla_vae.json
+@@ -0,0 +1 @@
++{"stage": "eval", "seconds": 6025.415419355035, "n_gen": 30000, "device": "sdaa:0"}
+diff --git a/time/smaple.json b/time/smaple.json
+new file mode 100644
+index 0000000..ade29b8
+--- /dev/null
++++ b/time/smaple.json
+@@ -0,0 +1 @@
++{"stage": "sample", "seconds": 1750.1855173148215, "model": "aae", "n_samples": 30000, "device": "sdaa:0"}
+-- 
+2.55.0.windows.3
+
